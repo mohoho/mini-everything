@@ -1,0 +1,20 @@
+README.md
+  s_f1b6d3e6634a5d::t_64ac77a3e4f9ea 6
+  s_f1b6d3e6634a5d::t_a52c9cfa36f06a 3,82,84,91,160
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.49-trip",
+  "base_commit_sha": "190e55b82a5a42c1d7d2d97ee93130f8d23ea306",
+  "prompts": {},
+  "sessions": {
+    "s_f1b6d3e6634a5d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1350b-7f7b-7082-a31b-8f6d1fcb6717",
+        "model": "deepseek-v4.1-flash[1M]"
+      },
+      "human_author": "mohoho <34470842+mohoho@users.noreply.github.com>"
+    }
+  }
+}
