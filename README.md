@@ -1,12 +1,9 @@
 # mini-everything
 
-**一个从零实现的「秒级全盘文件名搜索」工具** —— 复刻 [Everything](https://www.voidtools.com/) 的核心原理：
+**一个从零实现的「秒级全盘文件名搜索」工具** —— 思路与 [Everything](https://www.voidtools.com/) 一致：
 不遍历目录，直接问 NTFS 要整张文件表（USN / MFT），再用 FRN 链重建完整路径。
 
-项目源自一次逆向实践：用 [REA](https://github.com/morluto/rea) + Ghidra 反编译 `Everything.exe`，
-把它的索引机制还原出来，然后自己实现了一遍。
-
-A minimal, from-scratch reimplementation of Everything's core trick: ask NTFS for the whole
+A minimal, from-scratch take on the same idea as Everything: ask NTFS for the whole
 MFT in one pass via `FSCTL_ENUM_USN_DATA`, rebuild paths from file references, and serve instant
 searches — plus a live USN journal feed and a system-tray companion.
 
@@ -82,17 +79,16 @@ pythonw tray.py --open                       # 启动并直接打开搜索窗口
 
 ## 工作原理
 
-### 逆向得到的关键控制码
+### 用到的关键控制码
 
-反编译 `Everything.exe` 时，每个 `DeviceIoControl` 调用的下一句错误字符串就写着 FSCTL 名字，
-因此可以直接对上：
+读取卷和 MFT 需要下面这几个 NTFS 控制码，都通过 `DeviceIoControl` 调用：
 
 | 控制码 | 名称 | 用途 |
 | --- | --- | --- |
 | `0x000900B3` | `FSCTL_ENUM_USN_DATA` | 枚举整个 MFT，建立全量索引 |
 | `0x000900F4` | `FSCTL_QUERY_USN_JOURNAL` | 取日志 ID 与 NextUsn |
 | `0x000900BB` | `FSCTL_READ_USN_JOURNAL` | 增量读取创建/改名/删除 |
-| `0x00090064` | `FSCTL_GET_NTFS_VOLUME_DATA` | 卷几何（Everything 用它取每记录字节数） |
+| `0x00090064` | `FSCTL_GET_NTFS_VOLUME_DATA` | 卷几何（用于取每记录字节数） |
 | `0x00090068` | `FSCTL_GET_NTFS_FILE_RECORD` | 按 FRN 读一条 MFT 记录 |
 
 ### 建索引（不遍历目录）
@@ -161,7 +157,7 @@ docs/                # 截图
 - 每个文件只保留一个名字：硬链接 / 多个 `$FILE_NAME` 记录会合并
 - 实时增量走"覆盖层"：目录改名会把旧子树标记隐藏、新路径走实时 FRN 映射；点「重建索引」可完全同步
 - 按大小/时间排序只统计**有界采样**（默认 3000 条），界面上会明确提示
-- 快速路径需要管理员权限。真正的 Everything 通过安装 Windows 服务让普通用户也能读卷
+- 快速路径需要管理员权限；非管理员运行时会自动降级为递归遍历
 - 常驻约 1.2 GB 内存（两卷路径 + 小写副本 + 目录 FRN 映射）
 - 仅支持 NTFS / ReFS；FAT/exFAT 没有 USN 日志，会走遍历降级路径
 
