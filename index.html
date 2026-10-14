@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mini Everything</title>
+<style>
+  :root{
+    --bg:#0f1216; --panel:#161b22; --panel2:#1b2129; --line:#252d38;
+    --fg:#e6edf3; --dim:#8b98a5; --accent:#4c9aff; --mark:#7a5c00; --markfg:#ffe28a;
+    --ok:#3fb950; --warn:#d29922; --err:#f85149; --hover:rgba(255,255,255,.04);
+  }
+  body.light{
+    --bg:#f6f8fa; --panel:#ffffff; --panel2:#f0f3f6; --line:#d8dee4;
+    --fg:#1f2328; --dim:#656d76; --accent:#0969da; --mark:#fff3b0; --markfg:#1f2328;
+    --ok:#1a7f37; --warn:#9a6700; --err:#cf222e; --hover:rgba(0,0,0,.04);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{background:var(--bg);color:var(--fg);font:13px/1.5 "Segoe UI",system-ui,sans-serif;display:flex;flex-direction:column}
+  header{display:flex;align-items:center;gap:12px;padding:9px 16px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .logo{font-weight:700;font-size:15px;letter-spacing:.3px;white-space:nowrap}
+  .logo span{color:var(--accent)}
+  .badge{background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:2px 8px;color:var(--dim);font-size:12px;white-space:nowrap}
+  .badge b{color:var(--fg);font-weight:600}
+  .badge.live b{color:var(--ok)}
+  .spacer{flex:1}
+  button,select{background:var(--panel2);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:5px 10px;cursor:pointer;font:inherit}
+  button:hover{border-color:var(--accent);color:var(--accent)}
+  button.on{border-color:var(--accent);color:var(--accent);background:var(--hover)}
+  main{flex:1;display:flex;min-height:0}
+  #left{flex:1;display:flex;flex-direction:column;min-width:0;border-right:1px solid var(--line)}
+  #searchbar{display:flex;align-items:center;gap:10px;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
+  #q{flex:1;min-width:220px;background:var(--bg);border:1px solid var(--line);border-radius:8px;color:var(--fg);padding:9px 12px;font:inherit;font-size:14px;outline:none}
+  #q:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(76,154,255,.15)}
+  .opt{display:flex;align-items:center;gap:4px;color:var(--dim);font-size:12px;cursor:pointer;user-select:none;white-space:nowrap}
+  #meta{padding:6px 16px;color:var(--dim);font-size:12px;border-bottom:1px solid var(--line);display:flex;gap:14px;flex-wrap:wrap}
+  #meta .warn{color:var(--warn)}
+  #listwrap{flex:1;overflow:auto;position:relative}
+  table{width:100%;border-collapse:collapse;table-layout:fixed}
+  thead th{position:sticky;top:0;background:var(--panel2);color:var(--dim);font-weight:600;font-size:12px;
+           text-align:left;padding:6px 10px;border-bottom:1px solid var(--line);cursor:pointer;user-select:none;z-index:2}
+  thead th:hover{color:var(--accent)}
+  thead th .arrow{color:var(--accent)}
+  th.c-size,td.c-size{width:110px;text-align:right;font-variant-numeric:tabular-nums}
+  th.c-date,td.c-date{width:150px;color:var(--dim);font-variant-numeric:tabular-nums}
+  td{padding:3px 10px;border-bottom:1px solid var(--hover);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  tbody tr:hover{background:var(--hover)}
+  .path{font-family:"Cascadia Mono",Consolas,monospace;font-size:12px}
+  .dir{color:var(--dim)}
+  mark{background:var(--mark);color:var(--markfg);border-radius:2px;padding:0 1px}
+  .fold{color:var(--accent)} .icon{color:var(--dim);margin-right:5px}
+  .grp{background:var(--panel);font-weight:600}
+  .grp .path{color:var(--accent)}
+  #right{width:390px;display:flex;flex-direction:column;background:var(--panel);min-width:260px}
+  #right h2{margin:0;padding:10px 14px;font-size:12px;font-weight:600;color:var(--dim);letter-spacing:.6px;
+            text-transform:uppercase;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--err)}
+  .dot.on{background:var(--ok)}
+  #livefilter{margin:8px 14px;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--fg);padding:6px 8px;font:inherit;font-size:12px}
+  #feed{flex:1;overflow:auto;padding-bottom:8px}
+  .ev{display:flex;gap:8px;padding:3px 14px;font-size:12px;font-family:"Cascadia Mono",Consolas,monospace}
+  .ev .tag{flex:0 0 118px;color:var(--warn);overflow:hidden;text-overflow:ellipsis}
+  .ev.create .tag{color:var(--ok)} .ev.delete .tag{color:var(--err)} .ev.rename .tag{color:var(--accent)}
+  .ev .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .empty{padding:22px 16px;color:var(--dim)}
+  kbd{background:var(--panel2);border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 5px;font-size:11px}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">Mini <span>Everything</span></div>
+  <select id="vol" title="搜索范围"><option value="ALL">全部卷</option></select>
+  <div class="badge">条目 <b id="st-count">-</b></div>
+  <div class="badge" id="st-method">-</div>
+  <div class="badge live" id="st-live" title="USN 日志已并入索引的增量数">增量 <b>0</b></div>
+  <div class="spacer"></div>
+  <button id="btn-list" class="on" title="列表视图">☰ 列表</button>
+  <button id="btn-outline" title="按文件夹分组">🗂 大纲</button>
+  <button id="rebuild">重建索引</button>
+  <button id="theme" title="切换主题">🌙</button>
+</header>
+
+<main>
+  <div id="left">
+    <div id="searchbar">
+      <input id="q" placeholder="输入文件名或路径片段…（支持正则）" autocomplete="off" spellcheck="false">
+      <label class="opt"><input type="checkbox" id="opt-regex"> 正则</label>
+      <label class="opt"><input type="checkbox" id="opt-case"> 区分大小写</label>
+      <label class="opt"><input type="checkbox" id="opt-dirs"> 只看目录</label>
+      <label class="opt">上限 <input type="number" id="opt-limit" value="300" min="10" max="5000" style="width:64px;background:var(--bg);border:1px solid var(--line);border-radius:6px;color:var(--fg);padding:3px 6px"></label>
+    </div>
+    <div id="meta">
+      <span>在 <b id="meta-count">0</b> 条中命中 <b id="meta-total">0</b> 条</span>
+      <span>用时 <b id="meta-ms">-</b> ms</span>
+      <span id="meta-note"></span>
+    </div>
+    <div id="listwrap">
+      <table id="tbl" hidden>
+        <thead><tr>
+          <th data-sort="name" style="width:auto">名称 / 路径 <span class="arrow"></span></th>
+          <th data-sort="size" class="c-size">大小 <span class="arrow"></span></th>
+          <th data-sort="date" class="c-date">修改时间 <span class="arrow"></span></th>
+        </tr></thead>
+        <tbody id="tb"></tbody>
+      </table>
+      <div class="empty" id="hint">索引就绪后开始输入即可实时搜索。按 <kbd>/</kbd> 聚焦，<kbd>Esc</kbd> 清空，点表头可按大小/时间排序。</div>
+    </div>
+  </div>
+
+  <div id="right">
+    <h2><span class="dot" id="live-dot"></span> 实时文件变更 <span id="live-vol" style="color:var(--fg);font-weight:400;text-transform:none"></span></h2>
+    <input id="livefilter" placeholder="按名称过滤，例如 .log / 项目名" spellcheck="false">
+    <div id="feed"><div class="empty">等待事件… 在资源管理器里创建/改名/删除文件，这里会实时出现，并自动并入上面的搜索索引。</div></div>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let timer = null, lastQuery = null, es = null, view = 'list';
+let sortKey = 'name', sortOrder = 'asc';
+
+/* ---------- theme ---------- */
+function applyTheme(light){ document.body.classList.toggle('light', light); $('theme').textContent = light ? '☀️' : '🌙'; }
+applyTheme(localStorage.getItem('me-theme') === 'light');
+$('theme').onclick = () => { const light = !document.body.classList.contains('light'); applyTheme(light); localStorage.setItem('me-theme', light ? 'light' : 'dark'); };
+
+/* ---------- helpers ---------- */
+function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function fmtSize(n){ if (n === null || n === undefined) return '—';
+  const u = ['B','KB','MB','GB','TB']; let i = 0; let v = n;
+  while (v >= 1024 && i < u.length-1){ v /= 1024; i++; }
+  return (i === 0 ? v : v.toFixed(v < 10 ? 2 : (v < 100 ? 1 : 0))) + ' ' + u[i]; }
+function fmtDate(t){ if (!t) return '—'; const d = new Date(t*1000); const p = n => String(n).padStart(2,'0');
+  return d.getFullYear() + '-' + p(d.getMonth()+1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()); }
+function hl(text, q, regex, cs){
+  if (!q || regex) return esc(text);
+  const i = cs ? text.indexOf(q) : text.toLowerCase().indexOf(q.toLowerCase());
+  if (i < 0) return esc(text);
+  return esc(text.slice(0,i)) + '<mark>' + esc(text.slice(i, i+q.length)) + '</mark>' + esc(text.slice(i+q.length));
+}
+function splitPath(p){ const i = p.lastIndexOf('\\'); return i < 0 ? ['', p] : [p.slice(0, i+1), p.slice(i+1)]; }
+
+/* ---------- results ---------- */
+function rowHtml(h, q, regex, cs){
+  const [dir, name] = splitPath(h.p);
+  const label = h.d ? '<span class="icon">📁</span>' : '';
+  const col = view === 'outline' ? '<span class="path">' + label + hl(name, q, regex, cs) + '</span>'
+                                 : '<span class="path"><span class="dir">' + esc(dir) + '</span>' + label + hl(name, q, regex, cs) + '</span>';
+  return '<td>' + col + '</td><td class="c-size">' + (h.d ? '&lt;DIR&gt;' : fmtSize(h.s)) +
+         '</td><td class="c-date">' + fmtDate(h.t) + '</td>';
+}
+function render(data, q){
+  const regex = $('opt-regex').checked, cs = $('opt-case').checked;
+  $('meta-total').textContent = data.total.toLocaleString();
+  $('meta-ms').textContent = data.ms;
+  $('meta-count').textContent = window.__count ? window.__count.toLocaleString() : '-';
+  $('meta-note').innerHTML = '';
+  if (data.sort_truncated) $('meta-note').innerHTML =
+    '<span class="warn">按前 ' + data.pool.toLocaleString() + ' 条排序（共 ' + data.total.toLocaleString() + ' 条命中）</span>';
+  const tb = $('tb'); tb.innerHTML = '';
+  if (!data.hits.length){ $('tbl').hidden = true; $('hint').hidden = false;
+    $('hint').textContent = '没有匹配项。'; return; }
+  $('hint').hidden = true; $('tbl').hidden = false;
+  const frag = document.createDocumentFragment();
+  if (view === 'outline'){
+    let cur = null, tbody = null, n = 0;
+    for (const h of data.hits){
+      const [dir] = splitPath(h.p);
+      if (dir !== cur){
+        cur = dir; n = 0;
+        const tr = document.createElement('tr'); tr.className = 'grp';
+        tr.innerHTML = '<td colspan="3"><span class="path">📁 ' + esc(dir) + '</span></td>';
+        frag.appendChild(tr); tbody = frag; 
+      }
+      const tr = document.createElement('tr'); tr.innerHTML = rowHtml(h, q, regex, cs);
+      frag.appendChild(tr);
+    }
+  } else {
+    for (const h of data.hits){ const tr = document.createElement('tr'); tr.innerHTML = rowHtml(h, q, regex, cs); frag.appendChild(tr); }
+  }
+  tb.appendChild(frag);
+  updateArrows();
+}
+function updateArrows(){
+  document.querySelectorAll('thead th').forEach(th => {
+    const a = th.querySelector('.arrow'); if (!a) return;
+    a.textContent = th.dataset.sort === sortKey ? (sortOrder === 'asc' ? '▲' : '▼') : '';
+  });
+}
+document.querySelectorAll('thead th').forEach(th => th.onclick = () => {
+  const k = th.dataset.sort;
+  if (sortKey === k) sortOrder = sortOrder === 'asc' ? 'desc' : 'asc';
+  else { sortKey = k; sortOrder = k === 'name' ? 'asc' : 'desc'; }
+  if (sortKey === 'name') sortKey = 'name'; search();
+});
+
+async function search(){
+  const q = $('q').value.trim();
+  if (!q){ $('tbl').hidden = true; $('hint').hidden = false;
+    $('hint').innerHTML = '输入关键词开始搜索。按 <kbd>/</kbd> 聚焦。';
+    $('meta-total').textContent='0'; $('meta-ms').textContent='-'; $('meta-note').innerHTML=''; return; }
+  lastQuery = q;
+  const p = new URLSearchParams({ q: q, limit: $('opt-limit').value,
+    regex: $('opt-regex').checked?'1':'0', case: $('opt-case').checked?'1':'0',
+    dirs: $('opt-dirs').checked?'1':'0', sort: sortKey, order: sortOrder, vol: $('vol').value });
+  const res = await fetch('/api/search?' + p);
+  const data = await res.json();
+  if (data.error){ $('hint').hidden = false; $('tbl').hidden = true; $('hint').textContent = data.error; return; }
+  if (q !== lastQuery) return;
+  render(data, q);
+}
+function schedule(){ clearTimeout(timer); timer = setTimeout(search, 110); }
+['q','opt-regex','opt-case','opt-dirs','opt-limit','vol'].forEach(id => {
+  $(id).addEventListener('input', schedule); $(id).addEventListener('change', () => { if (id === 'vol') connectLive(); schedule(); });
+});
+document.addEventListener('keydown', e => {
+  if (e.key === '/' && document.activeElement !== $('q')){ e.preventDefault(); $('q').focus(); }
+  if (e.key === 'Escape'){ $('q').value = ''; search(); }
+});
+$('btn-list').onclick = () => { view='list'; $('btn-list').classList.add('on'); $('btn-outline').classList.remove('on'); search(); };
+$('btn-outline').onclick = () => { view='outline'; $('btn-outline').classList.add('on'); $('btn-list').classList.remove('on'); search(); };
+
+/* ---------- stats + live feed ---------- */
+async function refreshStats(){
+  try {
+    const s = await (await fetch('/api/stats')).json();
+    window.__count = s.count;
+    $('st-count').textContent = (s.count||0).toLocaleString();
+    $('st-live').querySelector('b').textContent = (s.deltas||0).toLocaleString();
+    const parts = s.volumes.map(v => v.letter + ':' + (v.count||0).toLocaleString()
+      + (v.building ? '(建索引中)' : (v.seconds ? ' ' + v.seconds.toFixed(1) + 's' : ''))
+      + (v.error ? ' ⚠' : ''));
+    $('st-method').textContent = parts.join(' · ') || '-';
+    const sel = $('vol');
+    if (sel.options.length - 1 !== s.volumes.length){
+      const cur = sel.value;
+      sel.innerHTML = '<option value="ALL">全部卷</option>' +
+        s.volumes.map(v => '<option value="' + v.letter + '">' + v.letter + ':</option>').join('');
+      sel.value = cur;
+    }
+    if (s.building) setTimeout(refreshStats, 700);
+  } catch(e){}
+}
+refreshStats();
+setInterval(refreshStats, 10000);
+
+$('rebuild').onclick = async () => {
+  const drive = $('vol').value === 'ALL' ? 'C' : $('vol').value;
+  await fetch('/api/rebuild', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({drive})});
+  const t = setInterval(async () => {
+    const s = await (await fetch('/api/stats')).json();
+    if (!s.building){ clearInterval(t); refreshStats(); connectLive(); if ($('q').value.trim()) search(); }
+  }, 800);
+};
+
+function cls(tags){ if (tags.includes('file-delete')) return 'delete';
+  if (tags.includes('rename')) return 'rename'; if (tags.includes('file-create')) return 'create'; return ''; }
+function connectLive(){
+  if (es) es.close();
+  const drive = $('vol').value === 'ALL' ? 'C' : $('vol').value;
+  $('live-vol').textContent = '(' + drive + ':)';
+  es = new EventSource('/api/watch?drive=' + encodeURIComponent(drive));
+  es.onopen = () => $('live-dot').classList.add('on');
+  es.onerror = () => $('live-dot').classList.remove('on');
+  es.onmessage = (m) => {
+    const d = JSON.parse(m.data);
+    const f = $('livefilter').value.trim().toLowerCase();
+    if (f && !d.name.toLowerCase().includes(f)) return;
+    const feed = $('feed'); const e0 = feed.querySelector('.empty'); if (e0) e0.remove();
+    const el = document.createElement('div');
+    el.className = 'ev ' + cls(d.tags); el.title = d.tags + '\n' + d.path;
+    el.innerHTML = '<span class="tag">' + esc(d.tags) + '</span><span class="nm">' + esc(d.path) + '</span>';
+    feed.prepend(el);
+    while (feed.children.length > 500) feed.lastChild.remove();
+  };
+}
+connectLive();
+if (window.__count) $('meta-count').textContent = window.__count.toLocaleString();
+$('q').focus();
+</script>
+</body>
+</html>

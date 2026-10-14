@@ -1,0 +1,13 @@
+# generated index files (hundreds of MB)
+index_*.txt
+
+# logs
+*.log
+
+# python
+__pycache__/
+*.py[cod]
+
+# demos / scratch
+demo.log
+demo.err.log
