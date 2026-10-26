@@ -1,12 +1,12 @@
-/* Local, dependency-free pixel atlas. Geometry is decorative; counts are exact
-   for the searchable snapshot. No file sizes are inferred from this map. */
+/* Local, dependency-free pixel atlas. Size mode uses background metadata scans,
+   tracks coverage explicitly, and never substitutes file counts for bytes. */
 (() => {
   const kinds = {
     code: ['代码', '#89c992'], image: ['图像', '#d59ab7'],
     media: ['影音', '#86bfc7'], document: ['文档', '#d8c286'],
     archive: ['压缩包', '#c59b73'], other: ['其他', '#a5b0a1']
   };
-  let request = 0, controller, current, circles = [], resizeTimer, activityTimer, currentQuery = '', renderedLimit = 0;
+  let request = 0, controller, current, circles = [], resizeTimer, activityTimer, sizePoll, currentQuery = '', renderedLimit = 0;
   let lastRevision = '';
   const ocean = $('ocean'), canvas = $('atlas-canvas'), nodes = $('island-nodes');
   const mapLimit = () => Math.min(12, Math.max(1, Math.floor((ocean.clientWidth - 48) / 118)) * Math.max(1, Math.floor((ocean.clientHeight - 126) / 88)));
@@ -46,8 +46,9 @@
     bar.hidden = false;
   };
 
-  window.loadIslands = async () => {
+  window.loadIslands = async (refresh = false) => {
     if (view !== 'islands') return;
+    clearTimeout(sizePoll);
     const version = ++request;
     if (controller) controller.abort();
     controller = new AbortController();
@@ -59,7 +60,8 @@
     const message = $('atlas-message');
     const p = new URLSearchParams({scope: searchScope, q: $('q').value.trim(), vol: $('vol').value,
       regex: $('opt-regex').checked ? '1' : '0', case: $('opt-case').checked ? '1' : '0',
-      dirs: $('opt-dirs').checked ? '1' : '0', limit: String(mapLimit())});
+      dirs: $('opt-dirs').checked ? '1' : '0', limit: String(mapLimit()),
+      mode: $('atlas-weight').value, refresh: refresh === true ? '1' : '0'});
     if (!current || currentQuery !== p.toString()){
       message.hidden = false; message.textContent = '正在绘制群岛…';
     }
@@ -70,10 +72,33 @@
       if (!response.ok || data.error) throw new Error(data.error || '概览读取失败');
       const sameNodes = current && currentQuery === p.toString() && JSON.stringify(current.nodes) === JSON.stringify(data.nodes);
       current = data; currentQuery = p.toString(); renderedLimit = Number(p.get('limit'));
-      $('atlas-files').textContent = count(data.files);
+      const bySize = data.mode === 'size';
+      const scanning = bySize && ['counting', 'scanning'].includes(data.size_state);
+      $('atlas-metric-label').textContent = bySize ? '已知文件大小' : '文件居民';
+      $('atlas-metric-unit').textContent = bySize ? '' : '个文件';
+      $('atlas-files').textContent = bySize ? (data.size_state === 'counting' || (!data.known_files && data.files) ? '—' : fmtSize(data.bytes)) : count(data.files);
       $('atlas-dirs').textContent = count(data.directories);
       $('atlas-groups').textContent = count(data.groups);
-      $('atlas-mode').textContent = data.demo ? '演示海域 · 合成数据' : data.building ? '索引构建中' : '本机索引 · 文件数量';
+      $('atlas-mode').textContent = data.demo ? '演示海域 · 合成数据' : data.building ? '索引构建中' : '本机索引 · ' + (bySize ? '文件大小' : '文件数量');
+      $('map-scale-label').textContent = bySize ? '以已知文件大小为尺度' : '以文件数量为尺度';
+      $('atlas-note').textContent = bySize
+        ? '岛屿面积参考已知文件逻辑大小；“+”表示仍有大小未知的文件。小文件、空目录和未知大小保留最小面积，不代表实际磁盘占用。'
+        : '岛屿面积参考文件数量，空目录保留最小面积。概览基于当前可搜索索引，不代表磁盘空间占用。';
+      $('size-status').hidden = !bySize;
+      $('atlas-rescan').hidden = !bySize;
+      if (bySize){
+        const processed = data.scanned_files || 0, total = data.files || 0;
+        $('size-progress').max = Math.max(1, total);
+        $('size-progress').value = data.size_state === 'complete' ? Math.max(1, total) : processed;
+        $('size-progress').hidden = !scanning;
+        let status = data.size_state === 'counting' ? '正在整理当前范围的文件清单…'
+          : (scanning ? '后台统计 ' : '已统计 ') + count(processed) + ' / ' + count(total) + ' 个文件';
+        if (data.pending_files) status += ' · 待统计 ' + count(data.pending_files);
+        if (data.failed_files) status += ' · 无法读取大小 ' + count(data.failed_files);
+        if (data.stale) status += ' · 文件已变化，可点击重新统计';
+        if (data.scan_error) status += ' · 统计中断，请重新统计';
+        $('size-status-text').textContent = status;
+      }
       const queryNote = $('q').value.trim() ? '搜索命中 · ' : '';
       $('atlas-caption').textContent = queryNote + '展示 ' + data.nodes.length + ' 个区域' +
         (data.omitted_groups ? ' · 其余 ' + count(data.omitted_groups) + ' 个区域可在列表查看' : ' · 点击岛屿继续探索');
@@ -81,12 +106,13 @@
       Object.entries(kinds).forEach(([key, [name, color]]) => {
         const item = document.createElement('span');
         const swatch = document.createElement('i'); swatch.className = 'legend-mark'; swatch.style.background = color;
-        item.append(swatch, document.createTextNode(name + ' ' + count(data.types[key]))); $('atlas-legend').append(item);
+        const value = bySize ? fmtSize(data.type_bytes[key]) + (data.types[key] && (data.pending_files || data.failed_files) ? '+' : '') : count(data.types[key]);
+        item.append(swatch, document.createTextNode(name + ' ' + value)); $('atlas-legend').append(item);
       });
       if (data.errors.length && !data.nodes.length){
         message.hidden = false; message.textContent = data.errors.map(e => e.letter + ': 索引读取失败').join(' · ');
       } else if (!data.nodes.length){
-        message.hidden = false; message.textContent = data.building ? '正在建立索引，群岛即将出现…' : $('q').value.trim() ? '这片海域没有匹配的文件，试试其他关键词。' : '这片海域暂时没有可探索的文件。';
+        message.hidden = false; message.textContent = data.size_state === 'error' ? '大小统计中断，请点击重新统计。' : scanning ? '正在后台统计，群岛即将出现…' : data.building ? '正在建立索引，群岛即将出现…' : $('q').value.trim() ? '这片海域没有匹配的文件，试试其他关键词。' : '这片海域暂时没有可探索的文件。';
       } else message.hidden = true;
       if (data.errors.length && data.nodes.length) $('atlas-caption').textContent += ' · 部分磁盘索引不可用';
       if (!sameNodes) layout();
@@ -96,15 +122,22 @@
       ['atlas-files', 'atlas-dirs', 'atlas-groups'].forEach(id => $(id).textContent = '—');
       $('atlas-caption').textContent = '暂时无法读取概览'; $('atlas-legend').replaceChildren();
       message.hidden = false; message.textContent = error.message + '，请刷新重试。';
-    } finally { if (version === request) ocean.setAttribute('aria-busy', 'false'); }
+    } finally {
+      if (version === request){
+        ocean.setAttribute('aria-busy', 'false');
+        if (view === 'islands' && current && current.mode === 'size' && ['counting', 'scanning'].includes(current.size_state))
+          sizePoll = setTimeout(() => window.loadIslands(), 1000);
+      }
+    }
   };
 
   function hash(text){ let value = 2166136261; for (const c of text) value = Math.imul(value ^ c.charCodeAt(0), 16777619); return value >>> 0; }
   function pack(items){
-    const largest = Math.max(1, ...items.map(n => n.files || n.directories * .2));
+    const weight = n => current.mode === 'size' ? n.bytes : n.files || n.directories * .2 || 1;
+    const largest = Math.max(1, ...items.map(weight));
     const packed = [];
     items.forEach(node => {
-      const r = 22 + Math.sqrt((node.files || node.directories * .2 || 1) / largest) * 28;
+      const r = 22 + Math.sqrt(weight(node) / largest) * 28;
       let x = 0, y = 0;
       for (let step = 0; step < 25000; step++){
         const angle = step * .29, radius = Math.sqrt(step) * 2.5;
@@ -154,9 +187,10 @@
       button.style.left = p.x / width * 100 + '%'; button.style.top = (p.y + p.r * .2) / height * 100 + '%';
       button.style.width = Math.min(150, Math.max(84, p.r * 1.55)) + 'px';
       const title = document.createElement('strong'); title.textContent = node.name;
-      const detail = document.createElement('small'); detail.textContent = count(node.files) + ' 文件';
-      const drive = document.createElement('small'); drive.className = 'island-drive'; drive.textContent = node.kind === 'directory' ? count(node.directories) + ' 目录 · ' + node.path.slice(0, 2) : '查看文件 →';
-      const summary = count(node.files) + ' 文件 · ' + count(node.directories) + ' 目录';
+      const sizeLabel = !node.known_files && node.files ? '未知大小' : fmtSize(node.bytes) + (node.unknown_files ? '+' : '');
+      const detail = document.createElement('small'); detail.textContent = current.mode === 'size' ? sizeLabel : count(node.files) + ' 文件';
+      const drive = document.createElement('small'); drive.className = 'island-drive'; drive.textContent = node.kind === 'directory' ? count(current.mode === 'size' ? node.files : node.directories) + (current.mode === 'size' ? ' 文件 · ' : ' 目录 · ') + node.path.slice(0, 2) : '查看文件 →';
+      const summary = count(node.files) + ' 文件 · ' + count(node.directories) + ' 目录' + (current.mode === 'size' ? ' · ' + sizeLabel + (node.unknown_files ? '（' + count(node.unknown_files) + ' 个大小未知，含待统计）' : '') : '');
       button.append(title, detail, drive); button.title = node.path + '\n' + summary;
       button.setAttribute('aria-label', node.name + '，' + summary + (node.kind === 'directory' ? '，进入目录' : '，查看文件'));
       nodes.append(button);
@@ -225,6 +259,8 @@
   $('atlas-list').onclick = () => { searchCategory = ''; browseAll = true;
     setView('list');
   };
+  $('atlas-weight').onchange = () => window.loadIslands();
+  $('atlas-rescan').onclick = () => window.loadIslands(true);
   window.atlasStatsChanged = stats => {
     const revision = JSON.stringify(stats.volumes.map(v => [v.letter, v.built_at, v.deltas, v.building]));
     if (lastRevision && revision !== lastRevision && view === 'islands') window.loadIslands();

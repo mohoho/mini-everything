@@ -258,6 +258,111 @@ class OverviewTests(unittest.TestCase):
         self.assertEqual(out["nodes"][0]["category"], "document")
 
 
+class SizeOverviewTests(unittest.TestCase):
+    def setUp(self):
+        self.svc = webapp.Service(["C"])
+        self.vol = self.svc.volumes["C"]
+        seed(self.vol, [(r"C:\many\a.py", 10, False), (r"C:\many\b.py", 11, False),
+                        (r"C:\large\movie.mp4", 12, False), (r"C:\empty", 13, True)])
+        self.vol.stat_cache[r"c:\large\movie.mp4"] = (1000, 100, False)
+
+    def complete(self, **args):
+        self.svc.overview(mode="size", **args)
+        job = list(self.svc._size_jobs.values())[-1]
+        self.assertTrue(job.done.wait(3), "size scan did not finish")
+        out = self.svc.overview(mode="size", **args)
+        self.assertEqual(out["size_state"], "complete", out)
+        return out
+
+    def test_sizes_drive_order_instead_of_file_counts(self):
+        out = self.complete()
+        self.assertEqual(out["nodes"][0]["name"], "large")
+        self.assertEqual((out["bytes"], out["files"], out["known_files"]), (1020, 3, 3))
+        self.assertEqual(out["type_bytes"]["media"], 1000)
+        self.assertEqual(out["nodes"][-1]["bytes"], 0)
+        self.assertEqual(out["pending_files"], 0)
+
+    def test_zero_and_unknown_sizes_are_distinct(self):
+        seed(self.vol, [(r"C:\zero.txt", 10, False), (r"C:\missing.py", 11, False)])
+        with patch.object(self.vol, "stat", side_effect=[(0, 100, False), (None, None, False)]) as read:
+            out = self.complete()
+        self.assertEqual((out["bytes"], out["known_files"], out["failed_files"], out["unknown_files"]), (0, 1, 1, 1))
+        self.assertEqual(read.call_count, 2)
+        known = next(n for n in out["nodes"] if n["category"] == "document")
+        unknown = next(n for n in out["nodes"] if n["category"] == "code")
+        self.assertEqual((known["known_files"], unknown["known_files"]), (1, 0))
+
+    def test_all_files_are_measured_not_just_search_pool(self):
+        seed(self.vol, [(r"C:\all\f%d.py" % i, i + 10, False) for i in range(5100)])
+        out = self.complete()
+        self.assertEqual((out["bytes"], out["scanned_files"]), (51000, 5100))
+
+    def test_directory_filter_keeps_descendant_sizes(self):
+        seed(self.vol, [(r"C:\dev", 10, True), (r"C:\dev\file.py", 11, False),
+                        (r"C:\root.txt", 12, False)])
+        out = self.complete(dirs_only=True)
+        self.assertEqual((out["bytes"], out["files"]), (10, 1))
+        self.assertEqual([n["name"] for n in out["nodes"]], ["dev"])
+
+    def test_scope_and_query_apply_to_sizes(self):
+        out = self.complete(scope=r"C:\many", q=r"a\.py$", regex=True)
+        self.assertEqual((out["bytes"], out["files"]), (10, 1))
+        self.assertEqual(out["nodes"][0]["category"], "code")
+
+    def test_slow_metadata_does_not_block_overview_or_counts(self):
+        entered, release = threading.Event(), threading.Event()
+
+        def slow_stat(*_args):
+            entered.set()
+            release.wait(3)
+            return 5, 100, False
+
+        with patch.object(self.vol, "stat", side_effect=slow_stat):
+            try:
+                self.svc.overview(mode="size")
+                self.assertTrue(entered.wait(2))
+                partial = self.svc.overview(mode="size")
+                self.assertEqual(partial["size_state"], "scanning")
+                self.assertGreater(partial["pending_files"], 0)
+                self.assertEqual(self.svc.overview(mode="count")["files"], 3)
+            finally:
+                release.set()
+                self.assertTrue(list(self.svc._size_jobs.values())[-1].done.wait(3))
+
+    def test_limits_share_scan_and_keep_full_totals(self):
+        out = self.complete(limit=1)
+        self.assertEqual(out["nodes"][0]["bytes"], 1000)
+        self.assertEqual(out["bytes"], 1020)
+        self.assertEqual(out["omitted_bytes"], 20)
+        full = self.svc.overview(mode="size", limit=12)
+        self.assertEqual(len(self.svc._size_jobs), 1)
+        self.assertEqual(len(full["nodes"]), 3)
+
+    def test_changes_mark_snapshot_stale_and_refresh_rescans(self):
+        current_size = [20]
+        with patch.object(self.vol, "stat", side_effect=lambda *_: (current_size[0], 100, False)):
+            first = self.complete()
+            self.vol.apply_event(10, 5, 0, 2, r"many\a.py")
+            current_size[0] = 50
+            stale = self.svc.overview(mode="size")
+            self.assertTrue(stale["stale"])
+            self.assertEqual(stale["bytes"], first["bytes"])
+            self.svc.overview(mode="size", refresh=True)
+            job = list(self.svc._size_jobs.values())[-1]
+            self.assertTrue(job.done.wait(3))
+            updated = self.svc.overview(mode="size")
+        self.assertEqual(updated["bytes"], 150)
+        self.assertFalse(updated["stale"])
+
+    def test_evicted_scans_are_cancelled(self):
+        self.complete(q="many")
+        first = list(self.svc._size_jobs.values())[0]
+        for query in ("large", "empty", "a.py", "b.py"):
+            self.complete(q=query)
+        self.assertEqual(len(self.svc._size_jobs), 4)
+        self.assertTrue(first.cancel.is_set())
+
+
 class HttpTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -303,7 +408,7 @@ class HttpTests(unittest.TestCase):
                 self.assertGreater(len(response.read()), 100)
 
     def test_overview_rejects_invalid_scope_and_regex(self):
-        for query in ("scope=relative", "q=%5B&regex=1"):
+        for query in ("scope=relative", "q=%5B&regex=1", "mode=invalid", "mode=size&q=%5B&regex=1"):
             with self.assertRaises(urllib.error.HTTPError) as exc:
                 urllib.request.urlopen(self.base + "/api/overview?" + query)
             self.assertEqual(exc.exception.code, 400)

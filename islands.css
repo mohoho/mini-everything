@@ -32,6 +32,15 @@ header{padding:14px 24px;gap:10px;min-height:73px}
 #atlas-crumbs{display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-height:35px;margin-bottom:14px}
 #atlas-crumbs button{padding:4px 8px;font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #atlas-crumbs span{color:var(--dim)}
+.atlas-tools{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.atlas-tools #atlas-crumbs{margin-bottom:0}
+.atlas-weight-control{display:flex;align-items:center;gap:8px;flex-wrap:wrap;color:var(--dim);font-size:10px}
+.atlas-weight-control select,.atlas-weight-control button{padding:4px 7px;font-size:10px}
+.size-status{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:10px;color:var(--dim);margin:0 0 12px;line-height:1.8}
+.size-status progress{appearance:none;border:1px solid var(--line);border-radius:0;width:140px;height:7px;background:var(--panel2);accent-color:var(--accent)}
+.size-status progress::-webkit-progress-bar{background:var(--panel2)}
+.size-status progress::-webkit-progress-value{background:var(--accent)}
+.size-status progress::-moz-progress-bar{background:var(--accent)}
 .atlas-stats{display:grid;grid-template-columns:repeat(3,1fr);margin-bottom:16px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
 .atlas-stats>div{padding:13px 18px 12px;border-right:1px solid var(--line)}
 .atlas-stats>div:first-child{padding-left:0}.atlas-stats>div:last-child{border-right:0}

@@ -60,6 +60,28 @@ def in_scope(path, scope):
     return not scope or path.lower().startswith(scope.rstrip("\\").lower() + "\\")
 
 
+def overview_group(groups, path, is_dir, scope):
+    category = "" if is_dir else file_kind(path)
+    relative = path[len(scope.rstrip("\\")) + 1:] if scope else path[3:]
+    first, sep, _tail = relative.partition("\\")
+    if sep or is_dir:
+        child_path = ((scope.rstrip("\\") if scope else path[:2]) + "\\" + first)
+        key, name, kind = child_path.lower(), first, "directory"
+    else:
+        child_path = scope or path[:3]
+        key, name, kind = child_path.lower() + "|" + category, KIND_NAMES[category] + "文件", "category"
+    node = groups.get(key)
+    if node is None:
+        node = groups[key] = {
+            "key": key, "name": name, "path": child_path, "kind": kind,
+            "category": category if kind == "category" else "", "files": 0,
+            "directories": 0, "types": {k: 0 for k in KIND_NAMES},
+            "bytes": 0, "known_files": 0, "failed_files": 0,
+            "type_bytes": {k: 0 for k in KIND_NAMES},
+        }
+    return node, category
+
+
 class Volume:
     """One NTFS volume: base index, live deltas, MFT attribute lookups."""
 
@@ -249,13 +271,14 @@ class Volume:
             return True
         return bool(prefix_tuple) and path.startswith(prefix_tuple)
 
-    def matches(self, needle, regex, case):
+    def snapshot(self):
         with self.lock:
-            paths, lower, frns, isdirs = self.paths, self.lower, self.frns, self.isdirs
-            added = list(self.added.items())
-            added_keys = set(self.added)
-            removed = self.removed.copy()
-            prefixes = tuple(self.removed_prefixes)
+            return (self.paths, self.lower, self.frns, self.isdirs,
+                    list(self.added.items()), set(self.added),
+                    self.removed.copy(), tuple(self.removed_prefixes))
+
+    def matches(self, needle, regex, case, snapshot=None):
+        paths, lower, frns, isdirs, added, added_keys, removed, prefixes = snapshot or self.snapshot()
         if regex:
             rx = re.compile(needle, 0 if case else re.IGNORECASE)
             for i, p in enumerate(paths):
@@ -345,6 +368,8 @@ class Service:
         self.volumes = {l: Volume(l) for l in letters}
         self._overview_cache = {}
         self._overview_lock = threading.Lock()
+        self._size_jobs = {}
+        self._size_gate = threading.Semaphore(2)
 
     def build_all(self):
         threads = [threading.Thread(target=v.build, daemon=True) for v in self.volumes.values()]
@@ -418,11 +443,18 @@ class Service:
         return {"hits": rows, "total": total, "ms": round((time.time() - t0) * 1000, 2),
                 "sort": sort, "order": order, "pool": len(pool), "sort_truncated": truncated}
 
-    def overview(self, scope="", q="", regex=False, case=False, dirs_only=False, which="ALL", limit=24):
-        """Aggregate indexed names only. No file stats, sizes, or extra disk scans."""
+    def overview(self, scope="", q="", regex=False, case=False, dirs_only=False, which="ALL", limit=24,
+                 mode="count", refresh=False):
+        """Count names immediately or poll a bounded background size scan."""
         started = time.time()
         scope = normalize_scope(scope)
         limit = max(1, min(60, limit))
+        if mode not in ("count", "size"):
+            raise ValueError("mode must be count or size")
+        if regex:
+            re.compile(q, 0 if case else re.IGNORECASE)
+        if mode == "size":
+            return self._size_overview(scope, q, regex, case, dirs_only, which, limit, refresh)
         volumes = self.selected(which)
         versions = []
         for vol in volumes:
@@ -451,24 +483,7 @@ class Service:
                 category = "" if is_dir else file_kind(path)
                 if category:
                     types[category] += 1
-                relative = path[len(scope.rstrip("\\")) + 1:] if scope else path[3:]
-                first, sep, _tail = relative.partition("\\")
-                if sep or is_dir:
-                    child_path = ((scope.rstrip("\\") if scope else path[:2]) + "\\" + first)
-                    group_key = child_path.lower()
-                    name, kind = first, "directory"
-                else:
-                    # Direct files become six type islands instead of millions of nodes.
-                    child_path = scope or path[:3]
-                    group_key = child_path.lower() + "|" + category
-                    name, kind = KIND_NAMES[category] + "文件", "category"
-                node = groups.get(group_key)
-                if node is None:
-                    node = groups[group_key] = {
-                        "key": group_key, "name": name, "path": child_path, "kind": kind,
-                        "category": category if kind == "category" else "", "files": 0,
-                        "directories": 0, "types": {k: 0 for k in KIND_NAMES},
-                    }
+                node, _category = overview_group(groups, path, is_dir, scope)
                 node["directories" if is_dir else "files"] += 1
                 if category:
                     node["types"][category] += 1
@@ -477,7 +492,7 @@ class Service:
             node["dominant"] = max(node["types"], key=node["types"].get) if node["files"] else "other"
         hidden = nodes[limit:]
         result = {
-            "scope": scope, "files": files, "directories": directories, "types": types,
+            "scope": scope, "mode": "count", "files": files, "directories": directories, "types": types,
             "nodes": nodes[:limit], "groups": len(nodes), "omitted_groups": len(hidden),
             "omitted_files": sum(n["files"] for n in hidden),
             "building": any(v.building for v in volumes),
@@ -490,6 +505,153 @@ class Service:
                 self._overview_cache.pop(next(iter(self._overview_cache)))
             self._overview_cache[key] = result
         return result
+
+    def _size_overview(self, scope, q, regex, case, dirs_only, which, limit, refresh):
+        volumes = self.selected(which)
+        key = (scope.lower(), q, regex, case, dirs_only, which,
+               tuple((v.letter, v.built_at) for v in volumes))
+        with self._overview_lock:
+            job = self._size_jobs.get(key)
+            if refresh and job is not None:
+                job.cancel.set()
+                del self._size_jobs[key]
+                job = None
+            if job is None:
+                if len(self._size_jobs) >= 4:
+                    oldest = next(iter(self._size_jobs))
+                    self._size_jobs.pop(oldest).cancel.set()
+                if refresh:
+                    for vol in volumes:
+                        # Demo metadata is synthetic and cannot be reread from disk.
+                        if not (vol.method or "").startswith("demo"):
+                            with vol.lock:
+                                vol.stat_cache.clear()
+                                vol._stat_generation += 1
+                job = SizeOverviewJob(self._size_gate, volumes, scope, q, regex, case, dirs_only)
+                self._size_jobs[key] = job
+                threading.Thread(target=job.run, daemon=True).start()
+        return job.read(limit)
+
+
+class SizeOverviewJob:
+    """Two passes over a stable name snapshot; no per-file duplicate size table.
+
+    Counts and metadata coverage stay separate. Results are a scan snapshot,
+    explicitly marked stale after changes instead of restarting on every write.
+    """
+    def __init__(self, gate, volumes, scope, q, regex, case, dirs_only):
+        self.gate, self.volumes, self.scope = gate, volumes, scope
+        self.needle = q if regex or case else q.lower()
+        self.regex, self.case, self.dirs_only = regex, case, dirs_only
+        self.lock, self.cancel, self.done = threading.Lock(), threading.Event(), threading.Event()
+        self.revisions = [(v.built_at, v._stat_generation) for v in volumes]
+        self.created_at = time.time()
+        self.result = {"scope": scope, "mode": "size", "nodes": [], "groups": 0,
+                       "files": 0, "directories": 0, "types": {k: 0 for k in KIND_NAMES},
+                       "type_bytes": {k: 0 for k in KIND_NAMES}, "bytes": 0,
+                       "known_files": 0, "failed_files": 0, "scanned_files": 0,
+                       "pending_files": 0, "size_state": "counting", "scan_error": None,
+                       "scanned_at": self.created_at, "ms": 0}
+
+    def read(self, limit):
+        with self.lock:
+            result = dict(self.result)
+        result["nodes"] = result["nodes"][:limit]
+        result["omitted_groups"] = result["groups"] - len(result["nodes"])
+        result["omitted_files"] = result["files"] - sum(n["files"] for n in result["nodes"])
+        result["omitted_bytes"] = result["bytes"] - sum(n["bytes"] for n in result["nodes"])
+        result["unknown_files"] = result["files"] - result["known_files"]
+        result["stale"] = self.revisions != [(v.built_at, v._stat_generation) for v in self.volumes]
+        result["building"] = any(v.building for v in self.volumes)
+        result["demo"] = bool(self.volumes) and all((v.method or "").startswith("demo") for v in self.volumes)
+        result["errors"] = [{"letter": v.letter, "error": v.error} for v in self.volumes if v.error]
+        return result
+
+    def run(self):
+        while not self.cancel.is_set():
+            if self.gate.acquire(timeout=.1):
+                break
+        else:
+            self.done.set()
+            return
+        try:
+            self._scan()
+        except Exception as exc:
+            with self.lock:
+                self.result = dict(self.result, size_state="error", scan_error=str(exc))
+        finally:
+            self.gate.release()
+            self.done.set()
+
+    def _scan(self):
+        snapshots = [(vol, vol.snapshot()) for vol in self.volumes]
+        groups, types, type_bytes = {}, {k: 0 for k in KIND_NAMES}, {k: 0 for k in KIND_NAMES}
+        files = directories = known = failed = total_bytes = 0
+
+        def entries():
+            for vol, snapshot in snapshots:
+                for path, frn, is_dir in vol.matches(self.needle, self.regex, self.case, snapshot):
+                    if self.cancel.is_set():
+                        return
+                    if not in_scope(path, self.scope):
+                        continue
+                    if self.dirs_only and not is_dir:
+                        relative = path[len(self.scope.rstrip("\\")) + 1:] if self.scope else path[3:]
+                        if "\\" not in relative:
+                            continue  # Hide direct type islands; still sum files inside directories.
+                    if ntpath.dirname(path) != path:
+                        yield vol, path, frn, is_dir
+
+        def publish(state):
+            ordered = heapq.nsmallest(60, groups.values(), key=lambda n: (-n["bytes"], -(n["files"] + n["directories"]), n["key"]))
+            nodes = []
+            for node in ordered:
+                weights = node["type_bytes"] if node["bytes"] else node["types"]
+                nodes.append(dict(node, types=dict(node["types"]), type_bytes=dict(node["type_bytes"]),
+                                  unknown_files=node["files"] - node["known_files"],
+                                  dominant=max(weights, key=weights.get) if node["files"] else "other"))
+            with self.lock:
+                self.result = dict(self.result, nodes=nodes, groups=len(groups), files=files,
+                                   directories=directories, types=dict(types), type_bytes=dict(type_bytes),
+                                   bytes=total_bytes, known_files=known, failed_files=failed,
+                                   scanned_files=known + failed, pending_files=files - known - failed,
+                                   size_state=state, ms=round((time.time() - self.created_at) * 1000, 2))
+
+        for _vol, path, _frn, is_dir in entries():
+            node, category = overview_group(groups, path, is_dir, self.scope)
+            node["directories" if is_dir else "files"] += 1
+            if is_dir:
+                directories += 1
+            else:
+                files += 1
+                types[category] += 1
+                node["types"][category] += 1
+        if self.cancel.is_set():
+            return
+        publish("scanning")
+        last_publish = time.monotonic()
+        for vol, path, frn, is_dir in entries():
+            if is_dir:
+                continue
+            node, category = overview_group(groups, path, False, self.scope)
+            size, _mtime, metadata_is_dir = vol.stat(path, frn)
+            if size is None or size < 0 or metadata_is_dir:
+                failed += 1
+                node["failed_files"] += 1
+            else:
+                known += 1
+                node["known_files"] += 1
+                node["bytes"] += size
+                node["type_bytes"][category] += size
+                total_bytes += size
+                type_bytes[category] += size
+            if time.monotonic() - last_publish >= .5:
+                publish("scanning")
+                last_publish = time.monotonic()
+            if (known + failed) % 128 == 0:
+                time.sleep(.002)
+        if not self.cancel.is_set():
+            publish("complete")
 
 
 def make_handler(svc):
@@ -527,7 +689,9 @@ def make_handler(svc):
                         case=(qs.get("case") or ["0"])[0] == "1",
                         dirs_only=(qs.get("dirs") or ["0"])[0] == "1",
                         which=(qs.get("vol") or ["ALL"])[0],
-                        limit=int((qs.get("limit") or ["24"])[0]))
+                        limit=int((qs.get("limit") or ["24"])[0]),
+                        mode=(qs.get("mode") or ["count"])[0],
+                        refresh=(qs.get("refresh") or ["0"])[0] == "1")
                 except (ValueError, re.error) as exc:
                     return self._json({"error": str(exc)}, 400)
                 return self._json(out)

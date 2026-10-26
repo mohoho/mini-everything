@@ -99,18 +99,19 @@
     </div>
     <section id="islands" aria-label="文件群岛概览">
       <div class="atlas-heading"><div><div class="eyebrow">YOUR PERSONAL FILE ATLAS</div><h1>探索你的文件群岛<span class="pixel-spark" aria-hidden="true">✦</span></h1><p>每座岛屿，都是一处文件栖息地。</p></div><span id="atlas-mode" class="atlas-stamp">索引概览</span></div>
-      <nav id="atlas-crumbs" aria-label="目录导航"></nav>
-      <div class="atlas-stats"><div><span>文件居民</span><strong id="atlas-files">—</strong><small>个文件</small></div><div><span>目录聚落</span><strong id="atlas-dirs">—</strong><small>个目录</small></div><div><span>当前海域</span><strong id="atlas-groups">—</strong><small>个区域</small></div></div>
+      <div class="atlas-tools"><nav id="atlas-crumbs" aria-label="目录导航"></nav><div class="atlas-weight-control"><label for="atlas-weight">岛屿面积</label><select id="atlas-weight"><option value="size" selected>按文件大小</option><option value="count">按文件数量</option></select><button id="atlas-rescan">重新统计</button></div></div>
+      <div class="atlas-stats"><div><span id="atlas-metric-label">已知文件大小</span><strong id="atlas-files">—</strong><small id="atlas-metric-unit"></small></div><div><span>目录聚落</span><strong id="atlas-dirs">—</strong><small>个目录</small></div><div><span>当前海域</span><strong id="atlas-groups">—</strong><small>个区域</small></div></div>
+      <div id="size-status" class="size-status" aria-live="polite"><span id="size-status-text">准备统计文件大小…</span><progress id="size-progress" aria-label="文件大小统计进度" max="1" value="0"></progress></div>
       <div class="ocean" id="ocean" aria-busy="true">
         <div class="map-coordinates" aria-hidden="true">N ↑<br>FILE ARCHIPELAGO<br>00 : 00</div>
         <canvas id="atlas-canvas" aria-hidden="true"></canvas>
         <div id="island-nodes" aria-label="可探索的目录与文件类型"></div>
         <div id="atlas-message" role="status">正在绘制群岛…</div>
-        <div class="map-scale" aria-hidden="true">└────┴────┘<br>以文件数量为尺度</div>
+        <div class="map-scale" aria-hidden="true">└────┴────┘<br><span id="map-scale-label">以已知文件大小为尺度</span></div>
       </div>
       <div class="atlas-footer"><span id="atlas-caption" aria-live="polite">正在读取索引…</span><button id="atlas-list">查看当前海域的文件 →</button></div>
       <div id="atlas-legend" aria-label="文件类型图例"></div>
-      <p class="atlas-note">岛屿面积参考文件数量，空目录保留最小面积。概览基于当前可搜索索引，不代表磁盘空间占用。</p>
+      <p class="atlas-note" id="atlas-note">岛屿面积参考已知文件逻辑大小。小文件、空目录和未知大小保留最小面积，不代表实际磁盘占用。</p>
     </section>
     <div id="listwrap">
       <table id="tbl" hidden>
