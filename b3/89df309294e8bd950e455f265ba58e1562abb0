@@ -1,0 +1,25 @@
+world-layout.js
+  s_519739c4584358::t_8ee56359f6bab8 1-2,34-58,66,71,91-105,113-114,117
+islands.js
+  s_519739c4584358::t_8ee56359f6bab8 343
+README.md
+  s_519739c4584358::t_661e8e9c19a2a8 198
+test_world_layout.js
+  s_519739c4584358::t_661e8e9c19a2a8 12,55-75
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.51-trip",
+  "base_commit_sha": "b389df309294e8bd950e455f265ba58e1562abb0",
+  "prompts": {},
+  "sessions": {
+    "s_519739c4584358": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a16811-ad78-79c2-a7d4-3d30b8c8a7af",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "qmruan <qmruan@trip.com>"
+    }
+  }
+}
