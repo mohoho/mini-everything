@@ -679,8 +679,8 @@ def make_handler(svc):
                 return self._file("islands.css", "text/css; charset=utf-8")
             if u.path == "/islands.js":
                 return self._file("islands.js", "text/javascript; charset=utf-8")
-            if u.path == "/island-layout.js":
-                return self._file("island-layout.js", "text/javascript; charset=utf-8")
+            if u.path == "/world-layout.js":
+                return self._file("world-layout.js", "text/javascript; charset=utf-8")
             if u.path == "/api/stats":
                 return self._json(svc.stats())
             if u.path == "/api/overview":
