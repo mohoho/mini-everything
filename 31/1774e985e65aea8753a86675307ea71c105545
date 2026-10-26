@@ -1,0 +1,20 @@
+index.html
+  s_519739c4584358::t_de3e61d0092bc1 287,297-299,302
+  s_519739c4584358::t_4bf300a92ae11e 278
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.51-trip",
+  "base_commit_sha": "311774e985e65aea8753a86675307ea71c105545",
+  "prompts": {},
+  "sessions": {
+    "s_519739c4584358": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a16811-ad78-79c2-a7d4-3d30b8c8a7af",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "qmruan <qmruan@trip.com>"
+    }
+  }
+}
