@@ -82,8 +82,8 @@
       $('atlas-mode').textContent = data.demo ? '演示海域 · 合成数据' : data.building ? '索引构建中' : '本机索引 · ' + (bySize ? '文件大小' : '文件数量');
       $('map-scale-label').textContent = bySize ? '以已知文件大小为尺度' : '以文件数量为尺度';
       $('atlas-note').textContent = bySize
-        ? '岛屿面积参考已知文件逻辑大小；“+”表示仍有大小未知的文件。小文件、空目录和未知大小保留最小面积，不代表实际磁盘占用。'
-        : '岛屿面积参考文件数量，空目录保留最小面积。概览基于当前可搜索索引，不代表磁盘空间占用。';
+        ? '岛屿面积与已知文件逻辑大小成正比；“+”表示仍有未知大小。零字节和未知大小不绘制陆地，仍保留可点击标签。像素边缘有取整误差；不代表实际磁盘占用。'
+        : '岛屿面积与文件数量成正比；空目录不绘制陆地，仍保留可点击标签。概览基于当前可搜索索引，不代表磁盘空间占用。';
       $('size-status').hidden = !bySize;
       $('atlas-rescan').hidden = !bySize;
       if (bySize){
@@ -132,50 +132,10 @@
   };
 
   function hash(text){ let value = 2166136261; for (const c of text) value = Math.imul(value ^ c.charCodeAt(0), 16777619); return value >>> 0; }
-  function pack(items){
-    const weight = n => current.mode === 'size' ? n.bytes : n.files || n.directories * .2 || 1;
-    const largest = Math.max(1, ...items.map(weight));
-    const packed = [];
-    items.forEach(node => {
-      const r = 22 + Math.sqrt(weight(node) / largest) * 28;
-      let x = 0, y = 0;
-      for (let step = 0; step < 25000; step++){
-        const angle = step * .29, radius = Math.sqrt(step) * 2.5;
-        x = Math.cos(angle) * radius; y = Math.sin(angle) * radius;
-        if (packed.every(p => Math.hypot(x - p.x, y - p.y) > r + p.r + 12)) break;
-      }
-      packed.push({node, r, x, y});
-    });
-    return packed;
-  }
-
   function layout(){
     if (!current) return;
     const width = ocean.clientWidth, height = ocean.clientHeight;
-    const packed = pack(current.nodes);
-    if (!packed.length){ circles = []; nodes.replaceChildren(); draw(); return; }
-    const left = Math.min(...packed.map(p => p.x - p.r)), right = Math.max(...packed.map(p => p.x + p.r));
-    const top = Math.min(...packed.map(p => p.y - p.r)), bottom = Math.max(...packed.map(p => p.y + p.r));
-    const scale = Math.min((width - 48) / (right - left), (height - 126) / (bottom - top), 3);
-    const cx = width / 2, cy = height / 2 + 14;
-    circles = packed.map(p => ({...p, x: cx + (p.x - (left + right) / 2) * scale,
-      y: cy + (p.y - (top + bottom) / 2) * scale, r: p.r * scale}));
-    const labelWidth = p => Math.min(150, Math.max(84, p.r * 1.55));
-    const overlaps = circles.some((a, i) => circles.slice(i + 1).some(b =>
-      Math.abs(a.x - b.x) < (labelWidth(a) + labelWidth(b)) / 2 + 8 &&
-      Math.abs(a.y + a.r * .2 - b.y - b.r * .2) < 65));
-    if (overlaps){
-      // Dense directories keep a readable label for every island. Use spaced
-      // rows when circle packing would put labels across each other.
-      const cols = Math.max(1, Math.min(packed.length, Math.floor((width - 48) / 118)));
-      const rows = Math.ceil(packed.length / cols), cellW = (width - 48) / cols, cellH = (height - 126) / rows;
-      circles = packed.map((p, i) => {
-        const row = Math.floor(i / cols), column = i % cols, rowCount = Math.min(cols, packed.length - row * cols);
-        const radius = Math.min(cellW * .43, cellH * .44);
-        return {...p, x: width / 2 + (column - (rowCount - 1) / 2) * cellW,
-          y: 72 + cellH * (row + .5), r: radius * (.72 + .28 * (p.r - 22) / 28)};
-      });
-    }
+    circles = IslandLayout.layout(current.nodes, width, height, current.mode);
     nodes.replaceChildren();
     circles.forEach(p => {
       const node = p.node;
@@ -184,8 +144,10 @@
         else { searchScope = node.path; searchCategory = node.category; setView('list'); }
       });
       button.className = 'island-node'; button.dataset.path = node.path;
-      button.style.left = p.x / width * 100 + '%'; button.style.top = (p.y + p.r * .2) / height * 100 + '%';
-      button.style.width = Math.min(150, Math.max(84, p.r * 1.55)) + 'px';
+      button.dataset.bytes = String(node.bytes); button.dataset.landArea = String(p.area);
+      button.classList.toggle('no-land', p.r === 0);
+      button.style.left = p.labelX / width * 100 + '%'; button.style.top = p.labelY / height * 100 + '%';
+      button.style.width = p.labelWidth + 'px';
       const title = document.createElement('strong'); title.textContent = node.name;
       const sizeLabel = !node.known_files && node.files ? '未知大小' : fmtSize(node.bytes) + (node.unknown_files ? '+' : '');
       const detail = document.createElement('small'); detail.textContent = current.mode === 'size' ? sizeLabel : count(node.files) + ' 文件';
@@ -220,12 +182,21 @@
     }
     if (!current) return;
     circles.forEach(p => {
+      const lineStart = (p.y + p.r * .94 + 5) / 3, lineEnd = (p.labelY - 30) / 3;
+      ctx.fillStyle = grid;
+      if (p.r > 0) for (let y = lineStart; y < lineEnd; y += 3) ctx.fillRect(Math.round(p.x / 3), Math.round(y), 1, 1);
+      if (p.r === 0) return;
       const x = Math.round(p.x / 3), y = Math.round(p.y / 3), r = p.r / 3;
+      if (r < 1){
+        ctx.fillStyle = '#73946a'; ctx.beginPath();
+        ctx.ellipse(p.x / 3, p.y / 3, r, r * .82, 0, 0, Math.PI * 2); ctx.fill();
+        return;
+      }
       const seed = hash(p.node.key), color = kinds[p.node.dominant][1];
       for (let iy = -Math.ceil(r * 1.15); iy <= r * 1.15; iy++){
         for (let ix = -Math.ceil(r * 1.2); ix <= r * 1.2; ix++){
           const angle = Math.atan2(iy, ix);
-          const edge = 1 + .045 * Math.sin(angle * 7 + seed % 17) + .025 * Math.cos(angle * 11 + seed % 9);
+          const edge = 1 + .045 * Math.sin(angle * 7) + .025 * Math.cos(angle * 11);
           const d = Math.hypot(ix / r, iy / (r * .82)) / edge;
           if (d > 1.14) continue;
           ctx.fillStyle = d > 1.04 ? (light ? '#9bcacc' : '#245364') : d > .94 ? '#b39668' : d > .82 ? '#e0c68f' : d > .72 ? '#4f7760' : '#73946a';
@@ -233,6 +204,7 @@
           ctx.fillRect(x + ix, y + iy, 1, 1);
         }
       }
+      if (r < 10) return; // A landmark must not invent area on a tiny island.
       // Each island gets a small landmark above its native, keyboard-accessible label.
       const sy = y - Math.max(10, r * .5), sx = x - 4;
       if (p.node.dominant === 'image'){

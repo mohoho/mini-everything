@@ -7,7 +7,7 @@ A minimal, from-scratch take on the same idea as Everything: ask NTFS for the wh
 MFT in one pass via `FSCTL_ENUM_USN_DATA`, rebuild paths from file references, and serve instant
 searches — plus a live USN journal feed and a system-tray companion.
 
-![按文件大小展示的像素文件群岛（演示数据）](docs/screenshot-islands-size.png)
+![按文件大小等比例展示的像素文件群岛（演示数据）](docs/screenshot-islands-proportional.png)
 
 ---
 
@@ -64,7 +64,9 @@ python webapp.py --demo                      # 合成样本，无需管理员/�
 切换为「按文件数量」无需等待大小扫描。
 只看目录时会隐藏直接文件的类型岛屿，仍累计目录内部文件的大小。
 逻辑大小不等于实际磁盘占用：压缩、稀疏文件及索引未覆盖的空间不在此指标内。
-小文件、空目录与未知大小的岛屿保留最小显示面积，地图用于概览，精确值以标签为准。
+岛屿面积与已知文件字节数成正比：4 倍大小对应 4 倍面积、2 倍半径。
+所有岛屿统一缩放，密集布局只调整位置与整图缩放系数；小文件不设置最小面积，零字节与未知大小不绘制陆地。
+标签独立排布，空目录与未知大小仍可点击探索。像素海岸的取整会有微小误差，精确值以标签为准。
 
 ### 3) 系统托盘常驻小程序
 
@@ -165,6 +167,7 @@ mini_everything.py   # 引擎：USN 枚举、路径重建、MFT 属性解析、�
 webapp.py            # 本地 HTTP 服务：搜索、群岛聚合、统计、SSE、监听与重建
 index.html           # 搜索、排序、主题、视图、实时面板
 islands.js           # 群岛导航、像素地图、目录与类型列表联动
+island-layout.js     # 按面积等比例布局，标签避让与统一缩放
 islands.css          # 像素风样式与响应式布局
 tray.py              # 系统托盘常驻小程序
 demo.py              # 合成样本数据（供 --demo 与截图使用）
@@ -186,6 +189,7 @@ docs/                # 截图
 
 ```bash
 python -m unittest -v
+node --test test_island_layout.js
 ```
 
 回归检查使用合成索引和模拟卷接口，不需要管理员权限，也不会扫描真实磁盘。

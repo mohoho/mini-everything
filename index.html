@@ -111,7 +111,7 @@
       </div>
       <div class="atlas-footer"><span id="atlas-caption" aria-live="polite">正在读取索引…</span><button id="atlas-list">查看当前海域的文件 →</button></div>
       <div id="atlas-legend" aria-label="文件类型图例"></div>
-      <p class="atlas-note" id="atlas-note">岛屿面积参考已知文件逻辑大小。小文件、空目录和未知大小保留最小面积，不代表实际磁盘占用。</p>
+      <p class="atlas-note" id="atlas-note">岛屿面积与已知文件逻辑大小成正比。零字节和未知大小不绘制陆地，仍保留可点击标签；不代表实际磁盘占用。</p>
     </section>
     <div id="listwrap">
       <table id="tbl" hidden>
@@ -316,6 +316,7 @@ connectLive();
 if (window.__count) $('meta-count').textContent = window.__count.toLocaleString();
 $('q').focus();
 </script>
+<script src="/island-layout.js"></script>
 <script src="/islands.js"></script>
 </body>
 </html>

@@ -402,7 +402,8 @@ class HttpTests(unittest.TestCase):
             out = json.load(response)
             self.assertGreater(out["files"], 0)
             self.assertTrue(out["demo"])
-        for asset, content_type in [("islands.css", "text/css"), ("islands.js", "text/javascript")]:
+        for asset, content_type in [("islands.css", "text/css"), ("islands.js", "text/javascript"),
+                                    ("island-layout.js", "text/javascript")]:
             with urllib.request.urlopen(self.base + "/" + asset) as response:
                 self.assertIn(content_type, response.headers["Content-Type"])
                 self.assertGreater(len(response.read()), 100)

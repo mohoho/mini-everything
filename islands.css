@@ -55,6 +55,7 @@ header{padding:14px 24px;gap:10px;min-height:73px}
 .island-node strong{font-size:12px;font-weight:600;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .island-node small{display:block;font-size:9px;color:#b2cabc;white-space:nowrap}.island-node .island-drive{color:#e0c793}
 .island-node.active{border-color:#f5d78e;box-shadow:0 0 0 3px rgba(245,215,142,.3)}
+.island-node.no-land{border-style:dashed;background:rgba(12,30,31,.65)}
 .map-coordinates,.map-scale{position:absolute;color:var(--dim);font-size:9px;letter-spacing:1px;line-height:1.7;pointer-events:none;z-index:1}
 .map-coordinates{top:14px;left:16px}.map-scale{bottom:12px;right:16px;text-align:right}
 #atlas-message{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--atlas-ink);text-align:center;width:75%;background:var(--atlas-water);padding:15px;z-index:4}
