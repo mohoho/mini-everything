@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Mini Everything</title>
+<title>文件群岛 · Mini Everything</title>
 <style>
   :root{
     --bg:#0f1216; --panel:#161b22; --panel2:#1b2129; --line:#252d38;
@@ -66,16 +66,18 @@
   .empty{padding:22px 16px;color:var(--dim)}
   kbd{background:var(--panel2);border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 5px;font-size:11px}
 </style>
+<link rel="stylesheet" href="/islands.css">
 </head>
 <body>
 <header>
-  <div class="logo">Mini <span>Everything</span></div>
+  <div class="logo"><span class="pixel-logo" aria-hidden="true"></span>文件群岛 <small>MINI EVERYTHING</small></div>
   <select id="vol" title="搜索范围"><option value="ALL">全部卷</option></select>
   <div class="badge">条目 <b id="st-count">-</b></div>
   <div class="badge" id="st-method">-</div>
   <div class="badge live" id="st-live" title="USN 日志已并入索引的增量数">增量 <b>0</b></div>
   <div class="spacer"></div>
-  <button id="btn-list" class="on" title="列表视图">☰ 列表</button>
+  <button id="btn-islands" class="on" title="文件群岛概览">▦ 群岛</button>
+  <button id="btn-list" title="列表视图">☰ 列表</button>
   <button id="btn-outline" title="按文件夹分组">🗂 大纲</button>
   <button id="rebuild">重建索引</button>
   <button id="theme" title="切换主题">🌙</button>
@@ -84,7 +86,7 @@
 <main>
   <div id="left">
     <div id="searchbar">
-      <input id="q" placeholder="输入文件名或路径片段…（支持正则）" autocomplete="off" spellcheck="false">
+      <input id="q" aria-label="搜索文件或路径" placeholder="寻找文件，点亮它所在的岛屿…  /" autocomplete="off" spellcheck="false">
       <label class="opt"><input type="checkbox" id="opt-regex"> 正则</label>
       <label class="opt"><input type="checkbox" id="opt-case"> 区分大小写</label>
       <label class="opt"><input type="checkbox" id="opt-dirs"> 只看目录</label>
@@ -95,6 +97,21 @@
       <span>用时 <b id="meta-ms">-</b> ms</span>
       <span id="meta-note"></span>
     </div>
+    <section id="islands" aria-label="文件群岛概览">
+      <div class="atlas-heading"><div><div class="eyebrow">YOUR PERSONAL FILE ATLAS</div><h1>探索你的文件群岛<span class="pixel-spark" aria-hidden="true">✦</span></h1><p>每座岛屿，都是一处文件栖息地。</p></div><span id="atlas-mode" class="atlas-stamp">索引概览</span></div>
+      <nav id="atlas-crumbs" aria-label="目录导航"></nav>
+      <div class="atlas-stats"><div><span>文件居民</span><strong id="atlas-files">—</strong><small>个文件</small></div><div><span>目录聚落</span><strong id="atlas-dirs">—</strong><small>个目录</small></div><div><span>当前海域</span><strong id="atlas-groups">—</strong><small>个区域</small></div></div>
+      <div class="ocean" id="ocean" aria-busy="true">
+        <div class="map-coordinates" aria-hidden="true">N ↑<br>FILE ARCHIPELAGO<br>00 : 00</div>
+        <canvas id="atlas-canvas" aria-hidden="true"></canvas>
+        <div id="island-nodes" aria-label="可探索的目录与文件类型"></div>
+        <div id="atlas-message" role="status">正在绘制群岛…</div>
+        <div class="map-scale" aria-hidden="true">└────┴────┘<br>以文件数量为尺度</div>
+      </div>
+      <div class="atlas-footer"><span id="atlas-caption" aria-live="polite">正在读取索引…</span><button id="atlas-list">查看当前海域的文件 →</button></div>
+      <div id="atlas-legend" aria-label="文件类型图例"></div>
+      <p class="atlas-note">岛屿面积参考文件数量，空目录保留最小面积。概览基于当前可搜索索引，不代表磁盘空间占用。</p>
+    </section>
     <div id="listwrap">
       <table id="tbl" hidden>
         <thead><tr>
@@ -117,7 +134,8 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
-let timer = null, lastQuery = null, es = null, view = 'list';
+let timer = null, lastQuery = null, es = null, view = 'islands';
+let searchScope = '', searchCategory = '', searchVersion = 0, browseAll = false;
 let sortKey = 'name', sortOrder = 'asc';
 
 /* ---------- theme ---------- */
@@ -196,30 +214,45 @@ document.querySelectorAll('thead th').forEach(th => th.onclick = () => {
 });
 
 async function search(){
+  if (view === 'islands') return window.loadIslands && window.loadIslands();
+  const version = ++searchVersion;
   const q = $('q').value.trim();
-  if (!q){ $('tbl').hidden = true; $('hint').hidden = false;
+  if (!q && !searchScope && !searchCategory && !browseAll){ $('tbl').hidden = true; $('hint').hidden = false;
     $('hint').innerHTML = '输入关键词开始搜索。按 <kbd>/</kbd> 聚焦。';
     $('meta-total').textContent='0'; $('meta-ms').textContent='-'; $('meta-note').innerHTML=''; return; }
   lastQuery = q;
   const p = new URLSearchParams({ q: q, limit: $('opt-limit').value,
     regex: $('opt-regex').checked?'1':'0', case: $('opt-case').checked?'1':'0',
-    dirs: $('opt-dirs').checked?'1':'0', sort: sortKey, order: sortOrder, vol: $('vol').value });
+    dirs: $('opt-dirs').checked?'1':'0', sort: sortKey, order: sortOrder, vol: $('vol').value,
+    scope: searchScope, category: searchCategory });
+  try {
   const res = await fetch('/api/search?' + p);
   const data = await res.json();
+  if (version !== searchVersion || view === 'islands') return;
   if (data.error){ $('hint').hidden = false; $('tbl').hidden = true; $('hint').textContent = data.error; return; }
   if (q !== lastQuery) return;
   render(data, q);
+  } catch (error) { if (version === searchVersion){ $('hint').hidden = false; $('hint').textContent = '搜索暂时不可用，请重试。'; } }
 }
 function schedule(){ clearTimeout(timer); timer = setTimeout(search, 110); }
 ['q','opt-regex','opt-case','opt-dirs','opt-limit','vol'].forEach(id => {
-  $(id).addEventListener('input', schedule); $(id).addEventListener('change', () => { if (id === 'vol') connectLive(); schedule(); });
+  $(id).addEventListener('input', schedule); $(id).addEventListener('change', () => { if (id === 'vol'){ searchScope = ''; searchCategory = ''; connectLive(); } schedule(); });
 });
 document.addEventListener('keydown', e => {
   if (e.key === '/' && document.activeElement !== $('q')){ e.preventDefault(); $('q').focus(); }
   if (e.key === 'Escape'){ $('q').value = ''; search(); }
 });
-$('btn-list').onclick = () => { view='list'; $('btn-list').classList.add('on'); $('btn-outline').classList.remove('on'); search(); };
-$('btn-outline').onclick = () => { view='outline'; $('btn-outline').classList.add('on'); $('btn-list').classList.remove('on'); search(); };
+function setView(next){
+  view = next; ++searchVersion;
+  ['islands', 'list', 'outline'].forEach(name => { $('btn-' + name).classList.toggle('on', name === next); $('btn-' + name).setAttribute('aria-pressed', String(name === next)); });
+  $('islands').hidden = next !== 'islands'; $('listwrap').hidden = next === 'islands';
+  $('meta').hidden = next === 'islands';
+  if (next !== 'islands') window.showScopeBar && window.showScopeBar();
+  search();
+}
+$('btn-list').onclick = () => setView('list');
+$('btn-outline').onclick = () => setView('outline');
+$('btn-islands').onclick = () => { searchCategory = ''; setView('islands'); };
 
 /* ---------- stats + live feed ---------- */
 async function refreshStats(){
@@ -232,12 +265,14 @@ async function refreshStats(){
       + (v.building ? '(建索引中)' : (v.seconds ? ' ' + v.seconds.toFixed(1) + 's' : ''))
       + (v.error ? ' ⚠' : ''));
     $('st-method').textContent = parts.join(' · ') || '-';
+    $('st-method').title = s.volumes.map(v => v.letter + ': ' + (v.error || v.method || '等待索引')).join('\n');
+    window.atlasStatsChanged && window.atlasStatsChanged(s);
     const sel = $('vol');
     if (sel.options.length - 1 !== s.volumes.length){
       const cur = sel.value;
       sel.innerHTML = '<option value="ALL">全部卷</option>' +
         s.volumes.map(v => '<option value="' + v.letter + '">' + v.letter + ':</option>').join('');
-      sel.value = cur;
+      sel.value = cur || 'ALL';
     }
     if (s.building) setTimeout(refreshStats, 700);
   } catch(e){}
@@ -250,7 +285,7 @@ $('rebuild').onclick = async () => {
   await fetch('/api/rebuild', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({drive})});
   const t = setInterval(async () => {
     const s = await (await fetch('/api/stats')).json();
-    if (!s.building){ clearInterval(t); refreshStats(); connectLive(); if ($('q').value.trim()) search(); }
+    if (!s.building){ clearInterval(t); refreshStats(); connectLive(); search(); }
   }, 800);
 };
 
@@ -265,6 +300,7 @@ function connectLive(){
   es.onerror = () => $('live-dot').classList.remove('on');
   es.onmessage = (m) => {
     const d = JSON.parse(m.data);
+    window.atlasActivity && window.atlasActivity(d);
     const f = $('livefilter').value.trim().toLowerCase();
     if (f && !d.name.toLowerCase().includes(f)) return;
     const feed = $('feed'); const e0 = feed.querySelector('.empty'); if (e0) e0.remove();
@@ -279,5 +315,6 @@ connectLive();
 if (window.__count) $('meta-count').textContent = window.__count.toLocaleString();
 $('q').focus();
 </script>
+<script src="/islands.js"></script>
 </body>
 </html>

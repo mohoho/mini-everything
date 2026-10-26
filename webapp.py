@@ -11,6 +11,7 @@ import argparse
 import array
 import heapq
 import json
+import ntpath
 import os
 import queue
 import re
@@ -30,6 +31,33 @@ R_FILE_DELETE = 0x200
 R_RENAME_OLD = 0x1000
 R_RENAME_NEW = 0x2000
 POOL_CAP = 3000            # matches we will stat in order to sort by size/date
+
+FILE_KINDS = {
+    "code": {".py", ".js", ".ts", ".tsx", ".jsx", ".html", ".css", ".json", ".yml", ".yaml", ".sql", ".go", ".rs", ".java", ".c", ".cpp", ".h", ".sh"},
+    "image": {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico", ".bmp", ".psd"},
+    "media": {".mp4", ".mov", ".mkv", ".avi", ".mp3", ".wav", ".flac", ".ogg"},
+    "document": {".md", ".txt", ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".csv"},
+    "archive": {".zip", ".7z", ".rar", ".gz", ".tar", ".bz2", ".xz"},
+}
+KIND_NAMES = {"code": "代码", "image": "图像", "media": "影音", "document": "文档", "archive": "压缩包", "other": "其他"}
+
+
+def file_kind(path):
+    ext = ntpath.splitext(path)[1].lower()
+    return next((kind for kind, extensions in FILE_KINDS.items() if ext in extensions), "other")
+
+
+def normalize_scope(path):
+    if not path:
+        return ""
+    path = ntpath.normpath(path.replace("/", "\\"))
+    if not re.match(r"^[A-Za-z]:\\", path):
+        raise ValueError("scope must be an absolute drive path")
+    return path[0].upper() + path[1:]
+
+
+def in_scope(path, scope):
+    return not scope or path.lower().startswith(scope.rstrip("\\").lower() + "\\")
 
 
 class Volume:
@@ -315,6 +343,8 @@ class Volume:
 class Service:
     def __init__(self, letters):
         self.volumes = {l: Volume(l) for l in letters}
+        self._overview_cache = {}
+        self._overview_lock = threading.Lock()
 
     def build_all(self):
         threads = [threading.Thread(target=v.build, daemon=True) for v in self.volumes.values()]
@@ -339,8 +369,9 @@ class Service:
                 "building": any(v["building"] for v in vols),
                 "deltas": sum(v["deltas"] for v in vols)}
 
-    def search(self, q, limit, regex, case, dirs_only, sort, order, which):
+    def search(self, q, limit, regex, case, dirs_only, sort, order, which, scope="", category=""):
         t0 = time.time()
+        scope = normalize_scope(scope)
         needle = q if (case or regex) else q.lower()
         total = 0
 
@@ -349,6 +380,12 @@ class Service:
             for vol in self.selected(which):
                 for path, frn, is_dir in vol.matches(needle, regex, case):
                     if dirs_only and not is_dir:
+                        continue
+                    if not in_scope(path, scope):
+                        continue
+                    if category and (is_dir or file_kind(path) != category):
+                        continue
+                    if category and ntpath.dirname(path).lower().rstrip("\\") != scope.lower().rstrip("\\"):
                         continue
                     total += 1
                     yield path, vol, frn, is_dir
@@ -381,6 +418,79 @@ class Service:
         return {"hits": rows, "total": total, "ms": round((time.time() - t0) * 1000, 2),
                 "sort": sort, "order": order, "pool": len(pool), "sort_truncated": truncated}
 
+    def overview(self, scope="", q="", regex=False, case=False, dirs_only=False, which="ALL", limit=24):
+        """Aggregate indexed names only. No file stats, sizes, or extra disk scans."""
+        started = time.time()
+        scope = normalize_scope(scope)
+        limit = max(1, min(60, limit))
+        volumes = self.selected(which)
+        versions = []
+        for vol in volumes:
+            with vol.lock:
+                versions.append((vol.letter, vol.built_at, vol.deltas, len(vol.paths), vol.building, vol.error))
+        key = (scope.lower(), q, regex, case, dirs_only, which, limit, tuple(versions))
+        with self._overview_lock:
+            cached = self._overview_cache.get(key)
+            if cached is not None:
+                return dict(cached, ms=round((time.time() - started) * 1000, 2))
+        groups = {}
+        types = {kind: 0 for kind in KIND_NAMES}
+        files = directories = 0
+        needle = q if case or regex else q.lower()
+        for vol in volumes:
+            for path, _frn, is_dir in vol.matches(needle, regex, case):
+                if not in_scope(path, scope) or (dirs_only and not is_dir):
+                    continue
+                # Skip the root itself in recursive fallback indexes.
+                if ntpath.dirname(path) == path:
+                    continue
+                if is_dir:
+                    directories += 1
+                else:
+                    files += 1
+                category = "" if is_dir else file_kind(path)
+                if category:
+                    types[category] += 1
+                relative = path[len(scope.rstrip("\\")) + 1:] if scope else path[3:]
+                first, sep, _tail = relative.partition("\\")
+                if sep or is_dir:
+                    child_path = ((scope.rstrip("\\") if scope else path[:2]) + "\\" + first)
+                    group_key = child_path.lower()
+                    name, kind = first, "directory"
+                else:
+                    # Direct files become six type islands instead of millions of nodes.
+                    child_path = scope or path[:3]
+                    group_key = child_path.lower() + "|" + category
+                    name, kind = KIND_NAMES[category] + "文件", "category"
+                node = groups.get(group_key)
+                if node is None:
+                    node = groups[group_key] = {
+                        "key": group_key, "name": name, "path": child_path, "kind": kind,
+                        "category": category if kind == "category" else "", "files": 0,
+                        "directories": 0, "types": {k: 0 for k in KIND_NAMES},
+                    }
+                node["directories" if is_dir else "files"] += 1
+                if category:
+                    node["types"][category] += 1
+        nodes = sorted(groups.values(), key=lambda n: (-(n["files"] + n["directories"]), n["key"]))
+        for node in nodes:
+            node["dominant"] = max(node["types"], key=node["types"].get) if node["files"] else "other"
+        hidden = nodes[limit:]
+        result = {
+            "scope": scope, "files": files, "directories": directories, "types": types,
+            "nodes": nodes[:limit], "groups": len(nodes), "omitted_groups": len(hidden),
+            "omitted_files": sum(n["files"] for n in hidden),
+            "building": any(v.building for v in volumes),
+            "errors": [{"letter": v.letter, "error": v.error} for v in volumes if v.error],
+            "demo": bool(volumes) and all((v.method or "").startswith("demo") for v in volumes),
+            "ms": round((time.time() - started) * 1000, 2),
+        }
+        with self._overview_lock:
+            if len(self._overview_cache) >= 8:
+                self._overview_cache.pop(next(iter(self._overview_cache)))
+            self._overview_cache[key] = result
+        return result
+
 
 def make_handler(svc):
     class Handler(BaseHTTPRequestHandler):
@@ -403,8 +513,24 @@ def make_handler(svc):
             qs = urllib.parse.parse_qs(u.query)
             if u.path in ("/", "/index.html"):
                 return self._file("index.html", "text/html; charset=utf-8")
+            if u.path == "/islands.css":
+                return self._file("islands.css", "text/css; charset=utf-8")
+            if u.path == "/islands.js":
+                return self._file("islands.js", "text/javascript; charset=utf-8")
             if u.path == "/api/stats":
                 return self._json(svc.stats())
+            if u.path == "/api/overview":
+                try:
+                    out = svc.overview(
+                        scope=(qs.get("scope") or [""])[0], q=(qs.get("q") or [""])[0],
+                        regex=(qs.get("regex") or ["0"])[0] == "1",
+                        case=(qs.get("case") or ["0"])[0] == "1",
+                        dirs_only=(qs.get("dirs") or ["0"])[0] == "1",
+                        which=(qs.get("vol") or ["ALL"])[0],
+                        limit=int((qs.get("limit") or ["24"])[0]))
+                except (ValueError, re.error) as exc:
+                    return self._json({"error": str(exc)}, 400)
+                return self._json(out)
             if u.path == "/api/search":
                 q = (qs.get("q") or [""])[0]
                 try:
@@ -416,7 +542,9 @@ def make_handler(svc):
                         dirs_only=(qs.get("dirs") or ["0"])[0] == "1",
                         sort=(qs.get("sort") or ["name"])[0],
                         order=(qs.get("order") or ["asc"])[0],
-                        which=(qs.get("vol") or ["ALL"])[0])
+                        which=(qs.get("vol") or ["ALL"])[0],
+                        scope=(qs.get("scope") or [""])[0],
+                        category=(qs.get("category") or [""])[0])
                 except ValueError as exc:
                     return self._json({"error": str(exc)}, 400)
                 except re.error as exc:

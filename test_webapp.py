@@ -186,6 +186,78 @@ class WalkTests(unittest.TestCase):
                                 (r"C:\README", False), (r"C:\docs.v1\x.py", False)])
 
 
+class OverviewTests(unittest.TestCase):
+    def setUp(self):
+        self.svc = webapp.Service(["C", "D"])
+        seed(self.svc.volumes["C"], [(r"C:\dev", 10, True),
+             (r"C:\dev\a.py", 11, False), (r"C:\dev\empty.dir", 12, True),
+             (r"C:\device\b.JPG", 13, False), (r"C:\dev\sub\readme.md", 14, False)])
+        seed(self.svc.volumes["D"], [(r"D:\music\song.mp3", 20, False)])
+
+    def test_complete_counts_without_metadata_reads(self):
+        with patch.object(webapp.Volume, "stat", side_effect=AssertionError("must not read metadata")):
+            out = self.svc.overview()
+        self.assertEqual((out["files"], out["directories"], out["groups"]), (4, 2, 3))
+        self.assertEqual(out["types"]["code"], 1)
+        self.assertEqual(out["types"]["image"], 1)
+        self.assertEqual(out["types"]["media"], 1)
+        self.assertEqual(sum(n["files"] for n in out["nodes"]), out["files"])
+
+    def test_scope_boundary_and_empty_directory(self):
+        out = self.svc.overview(scope=r"c:/dev")
+        self.assertEqual((out["files"], out["directories"]), (2, 1))
+        self.assertEqual({n["name"] for n in out["nodes"]}, {"代码文件", "empty.dir", "sub"})
+        empty = self.svc.overview(scope=r"C:\dev\empty.dir")
+        self.assertEqual(empty["nodes"], [])
+        files = self.svc.search("", 10, False, False, False, "name", "asc", "ALL", scope=r"C:\dev")
+        self.assertEqual(files["total"], 3)
+
+    def test_category_islands_link_to_exact_direct_files(self):
+        out = self.svc.overview(scope=r"C:\dev")
+        node = next(n for n in out["nodes"] if n["kind"] == "category")
+        found = self.svc.search("", 10, False, False, False, "name", "asc", "ALL",
+                                scope=node["path"], category=node["category"])
+        self.assertEqual(found["total"], node["files"])
+        self.assertEqual(found["hits"][0]["p"], r"C:\dev\a.py")
+
+    def test_limit_keeps_full_summary(self):
+        out = self.svc.overview(limit=1)
+        self.assertEqual(len(out["nodes"]), 1)
+        self.assertEqual(out["omitted_groups"], 2)
+        self.assertEqual(sum(n["files"] for n in out["nodes"]) + out["omitted_files"], out["files"])
+
+    def test_counts_are_not_limited_by_search_sampling(self):
+        seed(self.svc.volumes["C"], [(r"C:\dev\f%d.py" % i, i + 10, False) for i in range(5100)])
+        out = self.svc.overview(which="C", limit=1)
+        self.assertEqual(out["files"], 5100)
+        self.assertEqual(out["nodes"][0]["files"], 5100)
+        self.assertEqual(out["types"]["code"], 5100)
+
+    def test_search_filters_and_volume_selection(self):
+        self.assertEqual(self.svc.overview(q=r"\.py$", regex=True)["files"], 1)
+        self.assertEqual(self.svc.overview(q="A.PY", case=True)["files"], 0)
+        self.assertEqual(self.svc.overview(q="A.PY")["files"], 1)
+        self.assertEqual(self.svc.overview(dirs_only=True)["files"], 0)
+        self.assertEqual(self.svc.overview(which="D")["files"], 1)
+
+    def test_cache_invalidated_by_live_overlay_and_rebuild_state(self):
+        self.assertEqual(self.svc.overview()["files"], 4)
+        vol = self.svc.volumes["C"]
+        vol.dirs[10] = r"C:\dev"
+        vol.apply_event(30, 10, 0, webapp.R_FILE_CREATE, "new.py")
+        self.assertEqual(self.svc.overview()["files"], 5)
+        vol.apply_event(30, 10, 0, webapp.R_FILE_DELETE, "new.py")
+        self.assertEqual(self.svc.overview()["files"], 4)
+        vol.building = True
+        self.assertTrue(self.svc.overview()["building"])
+
+    def test_fallback_volume_root_is_not_a_phantom_island(self):
+        seed(self.svc.volumes["D"], [("D:\\", 0, True), (r"D:\file.txt", 0, False)])
+        out = self.svc.overview(which="D")
+        self.assertEqual((out["files"], out["directories"]), (1, 0))
+        self.assertEqual(out["nodes"][0]["category"], "document")
+
+
 class HttpTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -219,6 +291,23 @@ class HttpTests(unittest.TestCase):
             urllib.request.urlopen(self.base + "/api/search?q=%5B&regex=1")
         self.assertEqual(exc.exception.code, 400)
         exc.exception.close()
+
+    def test_overview_and_static_assets(self):
+        with urllib.request.urlopen(self.base + "/api/overview?scope=C%3A%5Cdev") as response:
+            out = json.load(response)
+            self.assertGreater(out["files"], 0)
+            self.assertTrue(out["demo"])
+        for asset, content_type in [("islands.css", "text/css"), ("islands.js", "text/javascript")]:
+            with urllib.request.urlopen(self.base + "/" + asset) as response:
+                self.assertIn(content_type, response.headers["Content-Type"])
+                self.assertGreater(len(response.read()), 100)
+
+    def test_overview_rejects_invalid_scope_and_regex(self):
+        for query in ("scope=relative", "q=%5B&regex=1"):
+            with self.assertRaises(urllib.error.HTTPError) as exc:
+                urllib.request.urlopen(self.base + "/api/overview?" + query)
+            self.assertEqual(exc.exception.code, 400)
+            exc.exception.close()
 
 
 if __name__ == "__main__":

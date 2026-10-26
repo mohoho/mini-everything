@@ -7,7 +7,7 @@ A minimal, from-scratch take on the same idea as Everything: ask NTFS for the wh
 MFT in one pass via `FSCTL_ENUM_USN_DATA`, rebuild paths from file references, and serve instant
 searches — plus a live USN journal feed and a system-tray companion.
 
-![搜索界面](docs/screenshot-search.png)
+![像素文件群岛（演示数据）](docs/screenshot-islands.png)
 
 ---
 
@@ -18,7 +18,8 @@ searches — plus a live USN journal feed and a system-tray companion.
 - **大小与修改时间**：用 `FSCTL_GET_NTFS_FILE_RECORD` 直接解析 MFT 记录（`$DATA` / `$STANDARD_INFORMATION`），可点表头排序
 - **实时变更**：读 USN 变更日志，创建 / 改名 / 删除**秒级并入可搜索索引**，右侧同时滚动展示事件流
 - **多卷合并**：同时索引 C: 与 D:，合并搜索，可按卷过滤
-- **本地 Web UI**：单文件 HTML，无外部依赖；深色 / 浅色主题，列表 / 大纲两种视图
+- **本地 Web UI**：原生 HTML / CSS / JavaScript，无外部依赖；深色 / 浅色主题，群岛 / 列表 / 大纲三种视图
+- **像素文件群岛**：默认以岛屿展示目录分布，支持逐层探索、面包屑导航、搜索筛选及按文件类型查看列表；面积参考索引内文件数，不代表磁盘空间占用
 - **系统托盘常驻小程序**：托盘图标 + 右键菜单 + 全局热键 + 开机自启（`tray.py`）
 - **零第三方依赖跑核心**：USN/MFT 部分只用 Python 标准库 `ctypes` 调 Win32
 
@@ -150,8 +151,10 @@ pythonw tray.py --open                       # 启动并直接打开搜索窗口
 
 ```
 mini_everything.py   # 引擎：USN 枚举、路径重建、MFT 属性解析、实时日志
-webapp.py            # 本地 HTTP 服务：/api/search /api/stats /api/watch(SSE) /api/listen /api/rebuild
-index.html           # 前端单文件（搜索、排序、主题、视图、实时面板）
+webapp.py            # 本地 HTTP 服务：搜索、群岛聚合、统计、SSE、监听与重建
+index.html           # 搜索、排序、主题、视图、实时面板
+islands.js           # 群岛导航、像素地图、目录与类型列表联动
+islands.css          # 像素风样式与响应式布局
 tray.py              # 系统托盘常驻小程序
 demo.py              # 合成样本数据（供 --demo 与截图使用）
 docs/                # 截图
@@ -176,6 +179,7 @@ python -m unittest -v
 
 回归检查使用合成索引和模拟卷接口，不需要管理员权限，也不会扫描真实磁盘。
 覆盖多卷名称排序、增量去重、属性缓存失效、递归降级、日志回放起点与网页 API。
+群岛检查还覆盖完整数量统计、目录边界、类型分组、空目录、增量缓存失效与静态资源接口。
 
 ## 许可
 
