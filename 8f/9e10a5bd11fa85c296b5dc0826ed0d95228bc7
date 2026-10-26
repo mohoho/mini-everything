@@ -1,0 +1,27 @@
+webapp.py
+  s_519739c4584358::t_34588a0c250f3d 298-299
+  s_519739c4584358::t_a2e2f992b4ecc5 12,94,184,279-286,289-297,300-313,442,512,632
+test_webapp.py
+  s_519739c4584358::t_d0fb2762885883 123-167
+README.md
+  s_519739c4584358::t_d0fb2762885883 197
+islands.js
+  s_519739c4584358::t_34588a0c250f3d 145
+  s_519739c4584358::t_b0fc854931f7c2 12,81,150-169
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.51-trip",
+  "base_commit_sha": "8f9e10a5bd11fa85c296b5dc0826ed0d95228bc7",
+  "prompts": {},
+  "sessions": {
+    "s_519739c4584358": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a16811-ad78-79c2-a7d4-3d30b8c8a7af",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "qmruan <qmruan@trip.com>"
+    }
+  }
+}
