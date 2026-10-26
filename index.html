@@ -79,6 +79,7 @@
   <button id="btn-islands" class="on" title="文件世界概览">▦ 世界地图</button>
   <button id="btn-list" title="列表视图">☰ 列表</button>
   <button id="btn-outline" title="按文件夹分组">🗂 大纲</button>
+  <button id="live-panel-toggle" aria-expanded="false" aria-controls="right">展开实时变更</button>
   <button id="rebuild">重建索引</button>
   <button id="theme" title="切换主题">🌙</button>
 </header>
@@ -134,7 +135,7 @@
     </div>
   </div>
 
-  <div id="right">
+  <div id="right" hidden>
     <h2><span class="dot" id="live-dot"></span> 实时文件变更 <span id="live-vol" style="color:var(--fg);font-weight:400;text-transform:none"></span></h2>
     <button id="live-toggle" aria-pressed="false" style="margin:0 14px 8px">开启实时变更</button>
     <input id="livefilter" placeholder="按名称过滤，例如 .log / 项目名" spellcheck="false" disabled>
@@ -146,6 +147,12 @@
 const $ = (id) => document.getElementById(id);
 let timer = null, lastQuery = null, es = null, view = 'islands';
 let liveEnabled = false;
+$('live-panel-toggle').onclick = () => {
+  const expanded = $('right').hidden;
+  $('right').hidden = !expanded;
+  $('live-panel-toggle').setAttribute('aria-expanded', String(expanded));
+  $('live-panel-toggle').textContent = expanded ? '收起实时变更' : '展开实时变更';
+};
 let searchScope = new URLSearchParams(location.search).get('scope') || '', searchCategory = '', searchVersion = 0, browseAll = false;
 let sortKey = 'name', sortOrder = 'asc';
 
