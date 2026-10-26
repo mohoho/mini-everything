@@ -1,0 +1,36 @@
+islands.js
+  s_519739c4584358::t_5f35b08761b432 9,11,21,44,66,85-86,104,115,121,135-152,156-173,175,178-190,215-229,231-238,241-250
+  s_519739c4584358::t_0c937fcb272f3f 82,174
+README.md
+  s_519739c4584358::t_60e75ddd4911a7 10,21-22,58-59,65,67-70,168,170-171,183,193,198
+index.html
+  s_519739c4584358::t_5f35b08761b432 6,73,79,89,100-103,106,109,112-113,115,320
+islands.css
+  s_519739c4584358::t_91c3711b638a12 53-64
+world-layout.js
+  s_519739c4584358::t_0c937fcb272f3f 48-50
+  s_519739c4584358::t_aaec57ee7a681c 1-2,5,7-16,19-47,51-70,81,84
+  s_519739c4584358::t_e4cc456e7cd504 71-79,82
+webapp.py
+  s_519739c4584358::t_aaec57ee7a681c 682-683
+test_webapp.py
+  s_519739c4584358::t_aaec57ee7a681c 406
+test_world_layout.js
+  s_519739c4584358::t_d848189d94d2ef 1-12,14-17,19-24,27-42,44-48,50-52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.51-trip",
+  "base_commit_sha": "01006e9084cc296046cbd72e3ebf7b555603bb3c",
+  "prompts": {},
+  "sessions": {
+    "s_519739c4584358": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a16811-ad78-79c2-a7d4-3d30b8c8a7af",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "qmruan <qmruan@trip.com>"
+    }
+  }
+}
