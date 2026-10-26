@@ -38,6 +38,24 @@ class SearchTests(unittest.TestCase):
         self.assertEqual([r["p"] for r in self.search(order="desc")["hits"]],
                          [r"D:\b.txt", r"C:\c.txt"])
 
+    def test_service_starts_with_journal_readers_paused(self):
+        self.assertFalse(self.svc.listening)
+        self.assertTrue(all(v.stop.is_set() for v in self.svc.volumes.values()))
+        vol = self.svc.volumes['C']
+        with patch.object(me, 'open_volume', return_value=1), \
+             patch.object(me, 'device_io', return_value=struct.pack('<7Q', 7, 0, 100, 0, 0, 0, 0)), \
+             patch.object(me, 'enum_volume', return_value={}), \
+             patch.object(vol, '_start_watch') as watch:
+            vol.build()
+        watch.assert_not_called()
+        self.assertTrue(vol.paused)
+        with patch.object(vol, '_start_watch') as watch:
+            self.svc.set_listen(True)
+        watch.assert_called_once()
+        self.assertTrue(self.svc.stats()['listening'])
+        self.svc.set_listen(False)
+        self.assertFalse(self.svc.stats()['listening'])
+
     def test_villagers_are_direct_files_with_bounded_metadata_reads(self):
         vol = self.svc.volumes['C']
         seed(vol, [(r'C:\village\b.txt', 10, False),

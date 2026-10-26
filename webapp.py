@@ -366,6 +366,9 @@ class Volume:
 class Service:
     def __init__(self, letters):
         self.volumes = {l: Volume(l) for l in letters}
+        self.listening = False
+        for vol in self.volumes.values():
+            vol.pause()
         self._overview_cache = {}
         self._overview_lock = threading.Lock()
         self._size_jobs = {}
@@ -384,13 +387,14 @@ class Service:
         return [self.volumes[c] for c in which.upper() if c in self.volumes]
 
     def set_listen(self, enabled):
+        self.listening = bool(enabled)
         for v in self.volumes.values():
             v.resume() if enabled else v.pause()
         return {l: v.stats()["paused"] for l, v in self.volumes.items()}
 
     def stats(self):
         vols = [v.stats() for v in self.volumes.values()]
-        return {"volumes": vols, "count": sum(v["count"] for v in vols),
+        return {"volumes": vols, "listening": self.listening, "count": sum(v["count"] for v in vols),
                 "building": any(v["building"] for v in vols),
                 "deltas": sum(v["deltas"] for v in vols)}
 

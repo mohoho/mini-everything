@@ -91,6 +91,8 @@ def _spinner(svc):
     i = 0
     while True:
         time.sleep(2.2)
+        if not svc.listening:
+            continue
         path = pool[i % len(pool)]
         i += 1
         label, reason = tags[i % len(tags)]

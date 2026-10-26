@@ -136,14 +136,16 @@
 
   <div id="right">
     <h2><span class="dot" id="live-dot"></span> 实时文件变更 <span id="live-vol" style="color:var(--fg);font-weight:400;text-transform:none"></span></h2>
-    <input id="livefilter" placeholder="按名称过滤，例如 .log / 项目名" spellcheck="false">
-    <div id="feed"><div class="empty">等待事件… 在资源管理器里创建/改名/删除文件，这里会实时出现，并自动并入上面的搜索索引。</div></div>
+    <button id="live-toggle" aria-pressed="false" style="margin:0 14px 8px">开启实时变更</button>
+    <input id="livefilter" placeholder="按名称过滤，例如 .log / 项目名" spellcheck="false" disabled>
+    <div id="feed"><div class="empty">实时文件变更已关闭。需要时可手动开启；关闭期间可通过重建索引更新文件清单。</div></div>
   </div>
 </main>
 
 <script>
 const $ = (id) => document.getElementById(id);
 let timer = null, lastQuery = null, es = null, view = 'islands';
+let liveEnabled = false;
 let searchScope = new URLSearchParams(location.search).get('scope') || '', searchCategory = '', searchVersion = 0, browseAll = false;
 let sortKey = 'name', sortOrder = 'asc';
 
@@ -305,7 +307,12 @@ function activeDrive(){
   return $('vol').value === 'ALL' ? ($('vol').options[1]?.value || 'C') : $('vol').value;
 }
 function connectLive(){
-  if (es) es.close();
+  if (es) { es.close(); es = null; }
+  $('live-dot').classList.remove('on');
+  $('live-toggle').textContent = liveEnabled ? '关闭实时变更' : '开启实时变更';
+  $('live-toggle').setAttribute('aria-pressed', String(liveEnabled));
+  $('livefilter').disabled = !liveEnabled;
+  if (!liveEnabled) { $('live-vol').textContent = '（已关闭）'; return; }
   const drive = activeDrive();
   $('live-vol').textContent = '(' + drive + ':)';
   es = new EventSource('/api/watch?drive=' + encodeURIComponent(drive));
@@ -324,6 +331,19 @@ function connectLive(){
     while (feed.children.length > 500) feed.lastChild.remove();
   };
 }
+$('live-toggle').onclick = async () => {
+  const button = $('live-toggle'); button.disabled = true;
+  try {
+    const response = await fetch('/api/listen', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:!liveEnabled})});
+    if (!response.ok) throw new Error('切换失败');
+    liveEnabled = !liveEnabled;
+    $('feed').replaceChildren();
+    const hint = document.createElement('div'); hint.className = 'empty';
+    hint.textContent = liveEnabled ? '等待文件变更…' : '实时文件变更已关闭。需要时可手动开启；关闭期间可通过重建索引更新文件清单。';
+    $('feed').append(hint); connectLive(); refreshStats();
+  } catch(error) { button.textContent = '切换失败，点击重试'; }
+  finally { button.disabled = false; }
+};
 connectLive();
 if (window.__count) $('meta-count').textContent = window.__count.toLocaleString();
 $('q').focus();
