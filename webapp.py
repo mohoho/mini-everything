@@ -9,6 +9,7 @@
 """
 import argparse
 import array
+import heapq
 import json
 import os
 import queue
@@ -55,6 +56,7 @@ class Volume:
         self.error = None
         self.deltas = 0
         self.stat_cache = {}
+        self._stat_generation = 0
         self.subscribers = []
         self.stop = threading.Event()
         self._watch_gen = 0
@@ -78,11 +80,26 @@ class Volume:
     def _build(self):
         t0 = time.time()
         letter = self.letter
-        if self.handle is None:
-            self.handle = me.open_volume(letter)
-        table = me.enum_volume(letter, progress=False)
+        was_paused = self.stop.is_set()
+        # Retire the old reader before replacing its index or journal cursor.
+        with self.lock:
+            self._watch_gen += 1
+        journal_id = next_usn = None
+        fallback_reason = None
+        try:
+            if self.handle is None:
+                self.handle = me.open_volume(letter)
+            # Replay from BEFORE enumeration, including changes made during build.
+            raw = me.device_io(self.handle, me.FSCTL_QUERY_USN_JOURNAL, None, 0x38)
+            journal_id = struct.unpack_from("<Q", raw, 0)[0]
+            next_usn = struct.unpack_from("<Q", raw, 16)[0]
+            table = me.enum_volume(letter, progress=False)
+        except OSError as exc:
+            fallback_reason = str(exc)
+            table = None
+            journal_id = next_usn = None
         rows, dirs = [], {}
-        for frn, (name, parent, attrs) in table.items():
+        for frn, (name, parent, attrs) in (table or {}).items():
             if frn == me.ROOT_FRN or name.startswith("$"):
                 continue
             parts, seen, cur = [], set(), frn
@@ -102,6 +119,12 @@ class Volume:
             if is_dir:
                 dirs[frn] = full
             rows.append((full, frn, is_dir))
+        if table is None:
+            root = "%s:\\" % letter
+            if not os.path.isdir(root):
+                raise OSError("Volume %s is unavailable: %s" % (root, fallback_reason))
+            rows = [(path, 0, is_dir)
+                    for path, is_dir in me.walk_volume_entries(letter)]
         rows.sort(key=lambda r: r[0].lower())
         with self.lock:
             self.paths = [r[0] for r in rows]
@@ -114,16 +137,14 @@ class Volume:
             self.removed_prefixes = []
             self.deltas = 0
             self.stat_cache = {}
-            self.method = "USN/MFT (FSCTL_ENUM_USN_DATA)"
+            self._stat_generation += 1
+            self.method = ("recursive directory walk (no live updates)" if table is None
+                           else "USN/MFT (FSCTL_ENUM_USN_DATA)")
             self.seconds = time.time() - t0
             self.built_at = time.time()
-        try:
-            raw = me.device_io(self.handle, me.FSCTL_QUERY_USN_JOURNAL, None, 0x38)
-            self.journal_id = struct.unpack_from("<Q", raw, 0)[0]
-            self.next_usn = struct.unpack_from("<Q", raw, 16)[0]
-        except OSError:
-            self.journal_id = None
-        if self.journal_id is not None:
+            self.journal_id = journal_id
+            self.next_usn = next_usn
+        if self.journal_id is not None and not was_paused:
             self._start_watch()
 
     # -------------------------------------------------------------- live feed
@@ -147,10 +168,15 @@ class Volume:
                 time.sleep(0.35)
                 continue
             nxt = struct.unpack_from("<Q", data, 0)[0]
-            for frn, pfrn, attrs, reason, name in me.iter_usn_records_full(data):
-                self.apply_event(frn, pfrn, attrs, reason, name)
-            rd.StartUsn = nxt
-            self.next_usn = nxt
+            with self.lock:
+                if self.stop.is_set() or gen != self._watch_gen:
+                    return
+                for frn, pfrn, attrs, reason, name in me.iter_usn_records_full(data):
+                    self.apply_event(frn, pfrn, attrs, reason, name)
+                rd.StartUsn = nxt
+                self.next_usn = nxt
+            if len(data) == 8:
+                time.sleep(0.35)
 
     def apply_event(self, frn, pfrn, attrs, reason, name):
         parent = "%s:\\" % self.letter if pfrn == me.ROOT_FRN else self.dirs.get(pfrn)
@@ -158,11 +184,12 @@ class Volume:
             return
         full = parent.rstrip("\\") + "\\" + name
         is_dir = bool(attrs & me.FILE_ATTRIBUTE_DIRECTORY)
-        if not (reason & (R_FILE_DELETE | R_RENAME_OLD | R_RENAME_NEW | R_FILE_CREATE)):
-            return                                    # data-only: index unaffected
         with self.lock:
+            self.stat_cache.pop(full.lower(), None)
+            self._stat_generation += 1
+            if not (reason & (R_FILE_DELETE | R_RENAME_OLD | R_RENAME_NEW | R_FILE_CREATE)):
+                return                                # metadata invalidated; paths unchanged
             self.deltas += 1
-            self.stat_cache.pop(full, None)
             key = full.lower()
             if reason & (R_FILE_DELETE | R_RENAME_OLD):
                 self.removed.add(full)
@@ -199,11 +226,13 @@ class Volume:
             paths, lower, frns, isdirs = self.paths, self.lower, self.frns, self.isdirs
             added = list(self.added.items())
             added_keys = set(self.added)
-            removed = self.removed
+            removed = self.removed.copy()
             prefixes = tuple(self.removed_prefixes)
         if regex:
             rx = re.compile(needle, 0 if case else re.IGNORECASE)
             for i, p in enumerate(paths):
+                if lower[i] in added_keys:
+                    continue
                 if rx.search(p) and not self._hidden(p, removed, prefixes):
                     yield p, frns[i], bool(isdirs[i])
             for key, (p, frn, isd) in added:
@@ -212,6 +241,8 @@ class Volume:
             return
         if case:
             for i, p in enumerate(paths):
+                if lower[i] in added_keys:
+                    continue
                 if needle in p and not self._hidden(p, removed, prefixes):
                     yield p, frns[i], bool(isdirs[i])
             for key, (p, frn, isd) in added:
@@ -232,9 +263,12 @@ class Volume:
                 yield p, frn, isd
 
     def stat(self, path, frn):
-        hit = self.stat_cache.get(path)
-        if hit is not None:
-            return hit
+        key = path.lower()
+        with self.lock:
+            hit = self.stat_cache.get(key)
+            generation = self._stat_generation
+            if hit is not None:
+                return hit
         res = None
         if self.handle is not None and frn:
             try:
@@ -248,9 +282,12 @@ class Volume:
                 res = (0 if isd else st.st_size, st.st_mtime, isd)
             except OSError:
                 res = (None, None, False)
-        if len(self.stat_cache) > 300000:
-            self.stat_cache.clear()
-        self.stat_cache[path] = res
+        with self.lock:
+            # A change while stat was in flight must not restore stale metadata.
+            if generation == self._stat_generation:
+                if len(self.stat_cache) > 300000:
+                    self.stat_cache.clear()
+                self.stat_cache[key] = res
         return res
 
     def pause(self):
@@ -305,16 +342,24 @@ class Service:
     def search(self, q, limit, regex, case, dirs_only, sort, order, which):
         t0 = time.time()
         needle = q if (case or regex) else q.lower()
-        pool, total = [], 0
-        for vol in self.selected(which):
-            for path, frn, is_dir in vol.matches(needle, regex, case):
-                if dirs_only and not is_dir:
-                    continue
-                total += 1
-                if len(pool) < POOL_CAP:
-                    pool.append((path, vol, frn, is_dir))
-        truncated = total > len(pool)
+        total = 0
+
+        def candidates():
+            nonlocal total
+            for vol in self.selected(which):
+                for path, frn, is_dir in vol.matches(needle, regex, case):
+                    if dirs_only and not is_dir:
+                        continue
+                    total += 1
+                    yield path, vol, frn, is_dir
+
+        truncated = False
         if sort in ("size", "date"):
+            pool = []
+            for row in candidates():
+                if len(pool) < POOL_CAP:
+                    pool.append(row)
+            truncated = total > len(pool)
             rows = []
             for path, vol, frn, is_dir in pool:
                 size, mtime, isd = vol.stat(path, frn)
@@ -325,12 +370,14 @@ class Service:
                 rows.sort(key=lambda r: (r["t"] if r["t"] is not None else 0), reverse=(order == "desc"))
             rows = rows[:limit]
         else:
+            # Pick the global top N before truncation, including every volume
+            # and live overlay. Memory stays bounded by the requested limit.
+            pick = heapq.nlargest if order == "desc" else heapq.nsmallest
+            pool = pick(limit, candidates(), key=lambda row: row[0].lower())
             rows = []
-            for path, vol, frn, is_dir in pool[:limit]:
+            for path, vol, frn, is_dir in pool:
                 size, mtime, isd = vol.stat(path, frn)
                 rows.append({"p": path, "d": 1 if (is_dir or isd) else 0, "s": size, "t": mtime})
-            if order == "desc":
-                rows.reverse()
         return {"hits": rows, "total": total, "ms": round((time.time() - t0) * 1000, 2),
                 "sort": sort, "order": order, "pool": len(pool), "sort_truncated": truncated}
 

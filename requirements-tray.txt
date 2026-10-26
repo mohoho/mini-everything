@@ -1,0 +1,3 @@
+# Optional dependencies for tray.py; CLI and web UI use the standard library.
+pystray>=0.19.5,<1
+Pillow>=10,<13

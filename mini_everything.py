@@ -193,14 +193,21 @@ def resolve_paths(table, letter, include_dirs=True, hide_dollar=True):
 
 
 # --------------------------------------------------- recursive fallback
-def walk_volume(letter):
+def walk_volume_entries(letter):
+    """Yield paths with directory flags without guessing from file extensions."""
     root = "%s:\\" % letter
-    out = []
     for dirpath, dirnames, filenames in os.walk(root, onerror=lambda e: None,
                                                followlinks=False):
-        out.append(dirpath)
+        if dirpath == root:
+            yield dirpath, True
+        for name in dirnames:
+            yield os.path.join(dirpath, name), True
         for f in filenames:
-            out.append(os.path.join(dirpath, f))
+            yield os.path.join(dirpath, f), False
+
+
+def walk_volume(letter):
+    out = [path for path, _is_dir in walk_volume_entries(letter)]
     out.sort(key=str.lower)
     return out
 
