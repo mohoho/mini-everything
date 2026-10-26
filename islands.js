@@ -7,9 +7,13 @@
     archive: ['压缩包', '#c59b73'], other: ['其他', '#a5b0a1']
   };
   let request = 0, controller, current, world = {outline:[],regions:[],zero:[],roads:[]}, resizeTimer, activityTimer, sizePoll, currentQuery = '', renderedLimit = 0;
-  let lastRevision = '';
+  let lastRevision = '', renderedSignature = '';
+  let residents = {hits:[],total:0}, residentKey = '', residentAt = 0, residentError = '', selectedResident = '';
+  const person = ['..hhh..','..hhh..','..sss..','...s...','.ccccc.','.scccs.','..ccc..','..b.b..','..b.b..','.dd.dd.'];
+  const house = ['...r...','..rrr..','.rrrrr.','rrrrrrr','.wwwww.','.wgwgw.','.wwdww.','.wwdww.'];
   const ocean = $('ocean'), canvas = $('atlas-canvas'), nodes = $('island-nodes'), regionList = $('world-regions');
   const mapLimit = () => Math.min(12, Math.max(1, Math.floor((ocean.clientWidth - 48) / 118)) * Math.max(1, Math.floor((ocean.clientHeight - 126) / 88)));
+  const signature = data => JSON.stringify([data.mode,data.scope,data.nodes,ocean.clientWidth,ocean.clientHeight]);
   const count = n => n.toLocaleString('zh-CN');
   const makeButton = (text, action) => {
     const button = document.createElement('button'); button.type = 'button';
@@ -62,6 +66,14 @@
       regex: $('opt-regex').checked ? '1' : '0', case: $('opt-case').checked ? '1' : '0',
       dirs: $('opt-dirs').checked ? '1' : '0', limit: String(mapLimit()),
       mode: $('atlas-weight').value, refresh: refresh === true ? '1' : '0'});
+    const rp = new URLSearchParams(p); ['mode','refresh'].forEach(key => rp.delete(key));
+    rp.set('limit','48'); rp.set('direct','1');
+    const nextResidentKey = rp.toString();
+    if (residentKey !== nextResidentKey){
+      residents = {hits:[],total:0}; selectedResident = ''; residentError = '';
+      $('resident-detail').hidden = true; renderResidents();
+      $('resident-status').textContent = '正在读取当前位置的文件村民…';
+    }
     if (!current || currentQuery !== p.toString()){
       message.hidden = false; message.textContent = '正在绘制世界地图…';
     }
@@ -70,8 +82,20 @@
       const data = await response.json();
       if (version !== request || view !== 'islands') return;
       if (!response.ok || data.error) throw new Error(data.error || '概览读取失败');
-      const sameNodes = current && currentQuery === p.toString() && JSON.stringify(current.nodes) === JSON.stringify(data.nodes);
+      const sameNodes = renderedSignature === signature(data);
       current = data; currentQuery = p.toString(); renderedLimit = Number(p.get('limit'));
+      if (residentKey !== nextResidentKey || refresh === true || Date.now() - residentAt > 10000){
+        try {
+          const reply = await fetch('/api/search?' + rp, {signal:controller.signal});
+          const people = await reply.json();
+          if (version !== request || view !== 'islands') return;
+          if (!reply.ok || people.error) throw new Error(people.error || '村民读取失败');
+          residents = people; residentKey = nextResidentKey; residentAt = Date.now(); residentError = '';
+        } catch(error){
+          if (error.name === 'AbortError' || version !== request || view !== 'islands') return;
+          residents = {hits:[],total:0}; residentError = '村民名册暂时无法读取，稍后自动重试';
+        }
+      }
       const bySize = data.mode === 'size';
       const scanning = bySize && ['counting', 'scanning'].includes(data.size_state);
       $('atlas-metric-label').textContent = bySize ? '已知文件大小' : '文件居民';
@@ -116,9 +140,11 @@
       } else message.hidden = true;
       if (data.errors.length && data.nodes.length) $('atlas-caption').textContent += ' · 部分磁盘索引不可用';
       if (!sameNodes) layout();
+      else renderResidents();
     } catch(error){
       if (error.name === 'AbortError' || version !== request || view !== 'islands') return;
-      current = null; nodes.replaceChildren(); regionList.replaceChildren(); draw();
+      current = null; renderedSignature = ''; nodes.replaceChildren(); regionList.replaceChildren(); draw();
+      residents = {hits:[],total:0}; residentKey = ''; residentError = '概览读取失败，暂时无法展示村民'; renderResidents();
       ['atlas-files', 'atlas-dirs', 'atlas-groups'].forEach(id => $(id).textContent = '—');
       $('atlas-caption').textContent = '暂时无法读取概览'; $('atlas-legend').replaceChildren();
       message.hidden = false; message.textContent = error.message + '，请刷新重试。';
@@ -132,6 +158,65 @@
   };
 
   function hash(text){ let value = 2166136261; for (const c of text) value = Math.imul(value ^ c.charCodeAt(0), 16777619); return value >>> 0; }
+  function residentKind(path){
+    const ext = path.split('.').pop().toLowerCase();
+    const extensions = {code:'py js ts tsx jsx html css json yml yaml sql go rs java c cpp h sh',image:'png jpg jpeg gif webp svg ico bmp psd',media:'mp4 mov mkv avi mp3 wav flac ogg',document:'md txt pdf doc docx xls xlsx ppt pptx csv',archive:'zip 7z rar gz tar bz2 xz'};
+    return Object.keys(extensions).find(key => extensions[key].split(' ').includes(ext)) || 'other';
+  }
+  function pixelIcon(pattern, colors){
+    const svg = document.createElementNS('http://www.w3.org/2000/svg','svg');
+    svg.setAttribute('viewBox','0 0 7 '+pattern.length); svg.setAttribute('aria-hidden','true');
+    pattern.forEach((row,y)=>[...row].forEach((p,x)=>{
+      if (!colors[p]) return;
+      const rect = document.createElementNS(svg.namespaceURI,'rect');
+      Object.entries({x,y,width:1,height:1,fill:colors[p]}).forEach(([key,value])=>rect.setAttribute(key,value)); svg.append(rect);
+    }));
+    return svg;
+  }
+  function personIcon(file){
+    const seed = hash(file.p);
+    return pixelIcon(person,{h:['#654938','#a56d46','#d5b777'][seed%3],s:'#edc39c',c:kinds[residentKind(file.p)][1],b:'#3c5263',d:'#252e36'});
+  }
+  function selectResident(file){
+    selectedResident = file.p;
+    const panel = $('resident-detail'); panel.replaceChildren(); panel.hidden = false;
+    const title = document.createElement('strong'); title.textContent = file.p.split('\\').pop();
+    const path = document.createElement('span'); path.textContent = file.p;
+    const detail = document.createElement('span');
+    detail.textContent = kinds[residentKind(file.p)][0] + ' · ' + (file.s == null ? '大小未知' : fmtSize(file.s)) + ' · 修改时间：' + (file.t == null ? '未知' : new Date(file.t*1000).toLocaleString('zh-CN'));
+    panel.append(personIcon(file),title,path,detail,makeButton('收起详情',()=>{selectedResident='';panel.hidden=true;renderResidents();}));
+    renderResidents();
+    panel.scrollIntoView({block:'nearest',behavior:'smooth'});
+  }
+  function renderResidents(){
+    const layer = $('villager-nodes'), list = $('resident-list'); layer.replaceChildren(); list.replaceChildren();
+    const occupied = []; let placed = 0;
+    residents.hits.forEach(file=>{
+      const name = file.p.split('\\').pop(), kind = residentKind(file.p);
+      const button = makeButton('',()=>selectResident(file));
+      button.className = 'resident-card'; button.setAttribute('aria-pressed',String(file.p === selectedResident));
+      const label = document.createElement('span');label.textContent = name;
+      const size = document.createElement('small');size.textContent = file.s == null ? '未知' : fmtSize(file.s);
+      button.append(personIcon(file),label,size);button.title=file.p; button.setAttribute('aria-label','文件村民 '+name);
+      list.append(button);
+      const region = current && world.regions.find(p=>p.node.kind==='category' && p.node.category===kind && file.p.toLowerCase().startsWith(p.node.path.toLowerCase().replace(/\\$/,'')+'\\'));
+      if (!region || !current) return;
+      const slots = [];
+      for(let y=Math.ceil(region.y0+20);y<region.y1-20;y+=34) for(let x=Math.ceil(region.x0+16);x<region.x1-16;x+=28){
+        if(region.labelVisible && Math.abs(x-region.x)<region.labelWidth/2+16 && Math.abs(y-region.y)<40) continue;
+        if(![[-12,-17],[12,-17],[-12,17],[12,17]].every(([dx,dy])=>WorldLayout.contains(region.poly,x+dx,y+dy))) continue;
+        if(!occupied.some(([a,b])=>Math.abs(a-x)<26 && Math.abs(b-y)<32)) slots.push([x,y]);
+      }
+      if(!slots.length) return;
+      const [x,y]=slots[hash(file.p)%slots.length];occupied.push([x,y]);placed++;
+      const marker=makeButton('',()=>selectResident(file));marker.className='file-villager';
+      marker.style.left=x/ocean.clientWidth*100+'%';marker.style.top=y/ocean.clientHeight*100+'%';
+      marker.title=name+' · '+size.textContent;marker.dataset.path=file.p;
+      marker.setAttribute('aria-label','地图村民 '+name);marker.setAttribute('aria-pressed',String(file.p===selectedResident));marker.append(personIcon(file));layer.append(marker);
+    });
+    $('resident-status').textContent = residentError || (residents.total ? '名册 '+count(residents.hits.length)+' / '+count(residents.total)+' 位 · 地图 '+placed+' 位'+(residents.total>48?' · 按路径取前 48 位，其余可在文件列表查看':'') : '当前位置没有直接包含的文件，进入村庄继续探索');
+    if (selectedResident && !residents.hits.some(file=>file.p===selectedResident)){selectedResident='';$('resident-detail').hidden=true;}
+  }
   function openRegion(node){
     if (node.kind === 'directory') navigate(node.path);
     else { searchScope = node.path; searchCategory = node.category; setView('list'); }
@@ -152,6 +237,7 @@
   }
   function layout(){
     if (!current) return;
+    renderedSignature = signature(current);
     const width = ocean.clientWidth, height = ocean.clientHeight;
     world = WorldLayout.layout(current.nodes, width, height, current.mode);
     nodes.replaceChildren(); regionList.replaceChildren();
@@ -165,11 +251,11 @@
       button.style.width=w/width*100+'%'; button.style.height=h/height*100+'%';
       button.style.clipPath='polygon('+p.poly.map(([x,y])=>((x-p.x0)/w*100)+'% '+((y-p.y0)/h*100)+'%').join(',')+')';
       button.title=node.path+'\n'+summary;
-      button.setAttribute('aria-label',node.name+'，'+summary+(node.kind==='directory'?'，进入目录':'，查看文件'));
+      button.setAttribute('aria-label',node.name+'，'+summary+(node.kind==='directory'?'，进入村庄':'，查看文件'));
       if(p.labelVisible){
         const label=document.createElement('span');label.className='world-label';
         label.style.left=(p.x-p.x0)/w*100+'%';label.style.top=(p.y-p.y0)/h*100+'%';label.style.width=p.labelWidth+'px';
-        const title=document.createElement('strong');title.textContent=node.name;
+        const title=document.createElement('strong');title.textContent=(node.kind==='directory'?'⌂ ':'')+node.name;
         const detail=document.createElement('small');detail.textContent=value;
         label.append(title,detail);button.append(label);
       }
@@ -178,7 +264,7 @@
     current.nodes.forEach(node=>{
       const {value,summary}=nodeSummary(node),button=makeButton('',()=>openRegion(node));
       const swatch=document.createElement('i');swatch.className='legend-mark';swatch.style.background=terrainColor(node);
-      const name=document.createElement('span');name.textContent=node.name;
+      const name=document.createElement('span');name.textContent=node.kind==='directory'?'⌂ '+node.name+' 村庄':node.name+'居民';
       const size=document.createElement('small');size.textContent=value;
       button.append(swatch,name,size);button.title=node.path+'\n'+summary;
       button.setAttribute('aria-label',node.name+'，'+summary+'，地区清单');
@@ -188,7 +274,7 @@
       $('atlas-message').hidden=false;
       $('atlas-message').textContent='当前没有可分配面积的地区，可从下方清单继续探索。';
     }
-    draw();
+    draw(); renderResidents();
   }
 
   function sprite(ctx, pattern, x, y, colors, size = 1){
@@ -246,8 +332,12 @@
     world.roads.forEach(([a,b])=>{ctx.beginPath();ctx.moveTo(a[0]*sx,a[1]*sy);ctx.lineTo(b[0]*sx,b[1]*sy);ctx.stroke();});
     ctx.setLineDash([]);
     world.regions.forEach(p=>{
-      ctx.fillStyle='#445442';ctx.fillRect(Math.round(p.x*sx)-2,Math.round(p.y*sy)-2,5,5);
-      ctx.fillStyle='#e6d6a2';ctx.fillRect(Math.round(p.x*sx)-1,Math.round(p.y*sy)-1,3,3);
+      if(p.node.kind!=='directory') return;
+      ctx.save();path(p.poly);ctx.clip();
+      const x=Math.round(p.x*sx),y=Math.round(p.y*sy)-20;
+      [[-10,2],[1,-3],[10,4]].forEach(([dx,dy],i)=>sprite(ctx,house,x+dx-3,y+dy,{r:i===1?'#b96d53':'#885b4c',w:'#ead4a4',g:'#617c80',d:'#66513d'}));
+      ctx.fillStyle='#d6bc84';ctx.fillRect(x-10,y+13,25,2);ctx.fillRect(x+3,y+5,2,16);
+      ctx.restore();
     });
     sprite(ctx, ['..w...','..ww..','..www.','..t...','bbbbbb','.bbbb.'], width - 26, 23,
       {w:'#ddd5b4',t:'#ac8f67',b:'#b78562'}, 1);
@@ -260,7 +350,7 @@
   $('atlas-rescan').onclick = () => window.loadIslands(true);
   window.atlasStatsChanged = stats => {
     const revision = JSON.stringify(stats.volumes.map(v => [v.letter, v.built_at, v.deltas, v.building]));
-    if (lastRevision && revision !== lastRevision && view === 'islands') window.loadIslands();
+    if (lastRevision && revision !== lastRevision && view === 'islands' && ocean.getAttribute('aria-busy') !== 'true') window.loadIslands();
     lastRevision = revision;
   };
   window.atlasActivity = event => {
@@ -271,7 +361,7 @@
         button.classList.add('active'); setTimeout(() => button.classList.remove('active'), 1300);
       }
     });
-    if (!activityTimer) activityTimer = setTimeout(() => { activityTimer = null; if (view === 'islands') window.loadIslands(); }, 2500);
+    if (!activityTimer) activityTimer = setTimeout(() => { activityTimer = null; if (view === 'islands' && ocean.getAttribute('aria-busy') !== 'true') window.loadIslands(); }, 2500);
   };
   new ResizeObserver(() => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => {
     if (view !== 'islands' || !current) return;

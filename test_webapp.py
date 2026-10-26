@@ -38,6 +38,32 @@ class SearchTests(unittest.TestCase):
         self.assertEqual([r["p"] for r in self.search(order="desc")["hits"]],
                          [r"D:\b.txt", r"C:\c.txt"])
 
+    def test_villagers_are_direct_files_with_bounded_metadata_reads(self):
+        vol = self.svc.volumes['C']
+        seed(vol, [(r'C:\village\b.txt', 10, False),
+                   (r'C:\village\a.py', 11, False),
+                   (r'C:\village\child', 12, True),
+                   (r'C:\village\child\nested.txt', 13, False),
+                   (r'C:\village2\outside.txt', 14, False)])
+        with patch.object(vol, 'stat', return_value=(0, 100, False)) as metadata:
+            out = self.svc.search('', 1, False, False, False, 'name', 'asc', 'C',
+                                  scope=r'C:\village', direct=True)
+        self.assertEqual(out['total'], 2)
+        self.assertEqual(out['hits'], [{'p': r'C:\village\a.py', 'd': 0, 's': 0, 't': 100}])
+        self.assertEqual(metadata.call_count, 1)
+        filtered = self.svc.search('b.TXT', 48, False, False, False, 'name', 'asc', 'C',
+                                   scope=r'C:\VILLAGE', direct=True)
+        self.assertEqual(filtered['total'], 1)
+        dirs = self.svc.search('', 48, False, False, True, 'name', 'asc', 'C',
+                               scope=r'C:\village', direct=True)
+        self.assertEqual(dirs['hits'], [])
+
+    def test_global_villagers_only_include_each_volume_root(self):
+        vol = self.svc.volumes['C']
+        seed(vol, [(r'C:\root.txt', 10, False), (r'C:\village\nested.txt', 11, False)])
+        out = self.svc.search('', 48, False, False, False, 'name', 'asc', 'ALL', direct=True)
+        self.assertEqual([r['p'] for r in out['hits']], [r'C:\root.txt', r'D:\b.txt'])
+
     def test_overlay_participates_in_sort(self):
         vol = self.svc.volumes["C"]
         vol.apply_event(30, 5, 0, webapp.R_FILE_CREATE, "0.txt")
@@ -396,6 +422,12 @@ class HttpTests(unittest.TestCase):
             urllib.request.urlopen(self.base + "/api/search?q=%5B&regex=1")
         self.assertEqual(exc.exception.code, 400)
         exc.exception.close()
+
+    def test_villager_http_filter_excludes_nested_files_and_directories(self):
+        with urllib.request.urlopen(self.base + '/api/search?scope=C%3A%5Cdev&direct=1') as response:
+            out = json.load(response)
+            self.assertEqual(out['total'], 0)
+            self.assertEqual(out['hits'], [])
 
     def test_overview_and_static_assets(self):
         with urllib.request.urlopen(self.base + "/api/overview?scope=C%3A%5Cdev") as response:

@@ -394,7 +394,7 @@ class Service:
                 "building": any(v["building"] for v in vols),
                 "deltas": sum(v["deltas"] for v in vols)}
 
-    def search(self, q, limit, regex, case, dirs_only, sort, order, which, scope="", category=""):
+    def search(self, q, limit, regex, case, dirs_only, sort, order, which, scope="", category="", direct=False):
         t0 = time.time()
         scope = normalize_scope(scope)
         needle = q if (case or regex) else q.lower()
@@ -407,6 +407,9 @@ class Service:
                     if dirs_only and not is_dir:
                         continue
                     if not in_scope(path, scope):
+                        continue
+                    if direct and (is_dir or ntpath.dirname(path).lower().rstrip("\\") !=
+                                   (scope.lower().rstrip("\\") if scope else vol.letter.lower() + ":")):
                         continue
                     if category and (is_dir or file_kind(path) != category):
                         continue
@@ -710,7 +713,8 @@ def make_handler(svc):
                         order=(qs.get("order") or ["asc"])[0],
                         which=(qs.get("vol") or ["ALL"])[0],
                         scope=(qs.get("scope") or [""])[0],
-                        category=(qs.get("category") or [""])[0])
+                        category=(qs.get("category") or [""])[0],
+                        direct=(qs.get("direct") or ["0"])[0] == "1")
                 except ValueError as exc:
                     return self._json({"error": str(exc)}, 400)
                 except re.error as exc:

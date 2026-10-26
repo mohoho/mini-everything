@@ -98,7 +98,7 @@
       <span id="meta-note"></span>
     </div>
     <section id="islands" aria-label="文件世界概览">
-      <div class="atlas-heading"><div><div class="eyebrow">YOUR PERSONAL FILE ATLAS</div><h1>探索你的文件世界<span class="pixel-spark" aria-hidden="true">✦</span></h1><p>目录相邻成陆地，文件大小决定疆域。</p></div><span id="atlas-mode" class="atlas-stamp">索引概览</span></div>
+      <div class="atlas-heading"><div><div class="eyebrow">YOUR PERSONAL FILE ATLAS</div><h1>探索你的文件世界<span class="pixel-spark" aria-hidden="true">✦</span></h1><p>目录化作村庄，文件成为村民，文件大小决定疆域。</p></div><span id="atlas-mode" class="atlas-stamp">索引概览</span></div>
       <div class="atlas-tools"><nav id="atlas-crumbs" aria-label="目录导航"></nav><div class="atlas-weight-control"><label for="atlas-weight">地区面积</label><select id="atlas-weight"><option value="size" selected>按文件大小</option><option value="count">按文件数量</option></select><button id="atlas-rescan">重新统计</button></div></div>
       <div class="atlas-stats"><div><span id="atlas-metric-label">已知文件大小</span><strong id="atlas-files">—</strong><small id="atlas-metric-unit"></small></div><div><span>目录聚落</span><strong id="atlas-dirs">—</strong><small>个目录</small></div><div><span>当前版图</span><strong id="atlas-groups">—</strong><small>个区域</small></div></div>
       <div id="size-status" class="size-status" aria-live="polite"><span id="size-status-text">准备统计文件大小…</span><progress id="size-progress" aria-label="文件大小统计进度" max="1" value="0"></progress></div>
@@ -106,10 +106,17 @@
         <div class="map-coordinates" aria-hidden="true">N ↑<br>FILE WORLD MAP<br>00 : 00</div>
         <canvas id="atlas-canvas" aria-hidden="true"></canvas>
         <div id="island-nodes" aria-label="可探索的目录与文件类型"></div>
+        <div id="villager-nodes" aria-label="地图上的文件村民"></div>
         <div id="atlas-message" role="status">正在绘制世界地图…</div>
         <div class="map-scale" aria-hidden="true">└────┴────┘<br><span id="map-scale-label">以已知文件大小为尺度</span></div>
       </div>
       <div id="world-regions" class="world-regions" aria-label="地区清单"></div>
+      <section class="residents" aria-label="文件村民名册">
+        <div class="residents-heading"><strong>文件村民名册</strong><span id="resident-status" aria-live="polite">正在寻找村民…</span></div>
+        <p class="atlas-note">点击村庄进入目录，点击村民查看文件。名册只展示当前位置直接包含的文件；地图放不下的村民仍可在这里点选。</p>
+        <div id="resident-detail" class="resident-detail" hidden></div>
+        <div id="resident-list" class="resident-list"></div>
+      </section>
       <div class="atlas-footer"><span id="atlas-caption" aria-live="polite">正在读取索引…</span><button id="atlas-list">查看当前版图的文件 →</button></div>
       <div id="atlas-legend" aria-label="文件类型图例"></div>
       <p class="atlas-note" id="atlas-note">地区面积与已知文件逻辑大小成正比。零字节和未知大小不绘制陆地，仍保留可点击标签；不代表实际磁盘占用。</p>
@@ -137,7 +144,7 @@
 <script>
 const $ = (id) => document.getElementById(id);
 let timer = null, lastQuery = null, es = null, view = 'islands';
-let searchScope = '', searchCategory = '', searchVersion = 0, browseAll = false;
+let searchScope = new URLSearchParams(location.search).get('scope') || '', searchCategory = '', searchVersion = 0, browseAll = false;
 let sortKey = 'name', sortOrder = 'asc';
 
 /* ---------- theme ---------- */
