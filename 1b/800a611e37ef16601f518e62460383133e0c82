@@ -1,0 +1,36 @@
+README.md
+  s_519739c4584358::t_8a32794d8435db 10,68
+  s_519739c4584358::t_3b1caf88ce0ed4 67,69,170,192
+islands.js
+  s_519739c4584358::t_bc366bbadf0c3a 85-86,138,147-150,188,190-194,199,207
+  s_519739c4584358::t_643f714ae2ad7b 185-187
+island-layout.js
+  s_519739c4584358::t_4fe20a68de4fcf 1-49,54-60
+  s_519739c4584358::t_643f714ae2ad7b 50-53
+test_webapp.py
+  s_519739c4584358::t_643f714ae2ad7b 405-406
+index.html
+  s_519739c4584358::t_4fe20a68de4fcf 114,319
+islands.css
+  s_519739c4584358::t_8bd5cb93e02e5a 58
+test_island_layout.js
+  s_519739c4584358::t_8bd5cb93e02e5a 1-50
+webapp.py
+  s_519739c4584358::t_4fe20a68de4fcf 682-683
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.51-trip",
+  "base_commit_sha": "1b800a611e37ef16601f518e62460383133e0c82",
+  "prompts": {},
+  "sessions": {
+    "s_519739c4584358": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a16811-ad78-79c2-a7d4-3d30b8c8a7af",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "qmruan <qmruan@trip.com>"
+    }
+  }
+}
