@@ -1,0 +1,27 @@
+test_webapp.py
+  s_519739c4584358::t_06f94954651d68 41-58
+README.md
+  s_519739c4584358::t_06f94954651d68 198
+webapp.py
+  s_519739c4584358::t_2717fe72af0a88 369-371,390,397
+index.html
+  s_519739c4584358::t_2717fe72af0a88 139-141,148,310-315,334-346
+demo.py
+  s_519739c4584358::t_2717fe72af0a88 94-95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.51-trip",
+  "base_commit_sha": "4700f9f56d79f20991d6ea6bab138a40b028612a",
+  "prompts": {},
+  "sessions": {
+    "s_519739c4584358": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a16811-ad78-79c2-a7d4-3d30b8c8a7af",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "qmruan <qmruan@trip.com>"
+    }
+  }
+}
