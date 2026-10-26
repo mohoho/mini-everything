@@ -275,6 +275,7 @@ async function refreshStats(){
       sel.innerHTML = '<option value="ALL">全部卷</option>' +
         s.volumes.map(v => '<option value="' + v.letter + '">' + v.letter + ':</option>').join('');
       sel.value = cur || 'ALL';
+      connectLive();
     }
     if (s.building) setTimeout(refreshStats, 700);
   } catch(e){}
@@ -283,7 +284,7 @@ refreshStats();
 setInterval(refreshStats, 10000);
 
 $('rebuild').onclick = async () => {
-  const drive = $('vol').value === 'ALL' ? 'C' : $('vol').value;
+  const drive = activeDrive();
   await fetch('/api/rebuild', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({drive})});
   const t = setInterval(async () => {
     const s = await (await fetch('/api/stats')).json();
@@ -293,9 +294,12 @@ $('rebuild').onclick = async () => {
 
 function cls(tags){ if (tags.includes('file-delete')) return 'delete';
   if (tags.includes('rename')) return 'rename'; if (tags.includes('file-create')) return 'create'; return ''; }
+function activeDrive(){
+  return $('vol').value === 'ALL' ? ($('vol').options[1]?.value || 'C') : $('vol').value;
+}
 function connectLive(){
   if (es) es.close();
-  const drive = $('vol').value === 'ALL' ? 'C' : $('vol').value;
+  const drive = activeDrive();
   $('live-vol').textContent = '(' + drive + ':)';
   es = new EventSource('/api/watch?drive=' + encodeURIComponent(drive));
   es.onopen = () => $('live-dot').classList.add('on');
