@@ -120,6 +120,51 @@ class SearchTests(unittest.TestCase):
         self.assertEqual([r["p"] for r in out["hits"]], [r"C:\docs.v1"])
 
 
+class DirectoryIndexTests(unittest.TestCase):
+    def test_scoped_index_matches_full_scan_with_filters_and_live_changes(self):
+        vol = webapp.Volume('C')
+        seed(vol, [(r'C:\device\outside.py', 10, False),
+                   (r'C:\dev\子目录\笔记.md', 11, False),
+                   (r'C:\dev\A.py', 12, False), (r'C:\dev\gone.py', 13, False),
+                   (r'C:\dev', 14, True)])
+        vol.dirs[14] = r'C:\dev'
+        vol.apply_event(13, 14, 0, webapp.R_FILE_DELETE, 'gone.py')
+        vol.apply_event(12, 14, 0, webapp.R_FILE_CREATE, 'A.py')
+        vol.apply_event(15, 14, 0, webapp.R_FILE_CREATE, 'new.py')
+        for scope in (r'C:\DEV', 'C:\\', r'C:\dev\子目录', r'C:\missing'):
+            for needle, regex, case in [('', False, False), ('a.py', False, False),
+                                         ('A.py', False, True), (r'\.py$', True, False),
+                                         ('A', True, True)]:
+                with self.subTest(scope=scope, needle=needle, regex=regex, case=case):
+                    expected = [row for row in vol.matches(needle, regex, case) if webapp.in_scope(row[0], scope)]
+                    self.assertEqual(sorted(vol.matches(needle, regex, case, scope=scope)), sorted(expected))
+
+    def test_small_directory_uses_bounded_index_lookups(self):
+        class CountedPaths(list):
+            reads = 0
+            def __getitem__(self, key):
+                self.reads += 1
+                return super().__getitem__(key)
+        vol = webapp.Volume('C')
+        seed(vol, [(r'C:\folder%05d\file.txt' % i, i+10, False) for i in range(20000)])
+        vol.lower = CountedPaths(vol.lower)
+        vol._directory_index = (vol.lower, None)
+        with patch.object(vol, '_hidden', wraps=vol._hidden) as hidden:
+            rows = list(vol.matches('', False, False, scope=r'C:\folder10000'))
+        self.assertEqual([r[0] for r in rows], [r'C:\folder10000\file.txt'])
+        self.assertLess(vol.lower.reads, 50)
+        self.assertEqual(hidden.call_count, 1)
+
+    def test_rebuild_replaces_index_without_changing_existing_snapshot(self):
+        vol = webapp.Volume('C')
+        seed(vol, [(r'C:\old\file.txt', 10, False)])
+        old = vol.snapshot()
+        seed(vol, [(r'C:\new\file.txt', 11, False)])
+        self.assertEqual(list(vol.matches('', False, False, scope=r'C:\old')), [])
+        self.assertEqual(len(list(vol.matches('', False, False, scope=r'C:\new'))), 1)
+        self.assertEqual(len(list(vol.matches('', False, False, old, scope=r'C:\old'))), 1)
+
+
 class MetadataTests(unittest.TestCase):
     def test_data_and_basic_info_events_invalidate_cache(self):
         for reason in (1, 2, 4, 0x8000):

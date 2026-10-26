@@ -9,6 +9,7 @@
   let request = 0, controller, current, world = {outline:[],regions:[],zero:[],roads:[]}, resizeTimer, activityTimer, sizePoll, currentQuery = '', renderedLimit = 0;
   let lastRevision = '', renderedSignature = '';
   let residents = {hits:[],total:0}, residentKey = '', residentAt = 0, residentError = '', selectedResident = '';
+  let residentController, residentRequest = 0, pendingResidentKey = '';
   const person = ['..hhh..','..hhh..','..sss..','...s...','.ccccc.','.scccs.','..ccc..','..b.b..','..b.b..','.dd.dd.'];
   const house = ['...r...','..rrr..','.rrrrr.','rrrrrrr','.wwwww.','.wgwgw.','.wwdww.','.wwdww.'];
   const ocean = $('ocean'), canvas = $('atlas-canvas'), nodes = $('island-nodes'), regionList = $('world-regions');
@@ -77,6 +78,7 @@
     if (!current || currentQuery !== p.toString()){
       message.hidden = false; message.textContent = '正在绘制世界地图…';
     }
+    loadResidents(rp, refresh === true);
     try {
       const response = await fetch('/api/overview?' + p, {signal: controller.signal});
       const data = await response.json();
@@ -84,18 +86,6 @@
       if (!response.ok || data.error) throw new Error(data.error || '概览读取失败');
       const sameNodes = renderedSignature === signature(data);
       current = data; currentQuery = p.toString(); renderedLimit = Number(p.get('limit'));
-      if (residentKey !== nextResidentKey || refresh === true || Date.now() - residentAt > 10000){
-        try {
-          const reply = await fetch('/api/search?' + rp, {signal:controller.signal});
-          const people = await reply.json();
-          if (version !== request || view !== 'islands') return;
-          if (!reply.ok || people.error) throw new Error(people.error || '村民读取失败');
-          residents = people; residentKey = nextResidentKey; residentAt = Date.now(); residentError = '';
-        } catch(error){
-          if (error.name === 'AbortError' || version !== request || view !== 'islands') return;
-          residents = {hits:[],total:0}; residentError = '村民名册暂时无法读取，稍后自动重试';
-        }
-      }
       const bySize = data.mode === 'size';
       const scanning = bySize && ['counting', 'scanning'].includes(data.size_state);
       $('atlas-metric-label').textContent = bySize ? '已知文件大小' : '文件居民';
@@ -152,10 +142,31 @@
       if (version === request){
         ocean.setAttribute('aria-busy', 'false');
         if (view === 'islands' && current && current.mode === 'size' && ['counting', 'scanning'].includes(current.size_state))
-          sizePoll = setTimeout(() => window.loadIslands(), 1000);
+          sizePoll = setTimeout(() => window.loadIslands(), world.regions.length ? 1000 : 200);
       }
     }
   };
+
+  async function loadResidents(params, refresh){
+    const key = params.toString();
+    if (!refresh && (pendingResidentKey === key || (residentKey === key && Date.now()-residentAt < 10000))) return;
+    if (residentController) residentController.abort();
+    residentController = new AbortController();
+    const version = ++residentRequest; pendingResidentKey = key;
+    try {
+      const reply = await fetch('/api/search?' + params, {signal:residentController.signal});
+      const people = await reply.json();
+      if (version !== residentRequest || view !== 'islands') return;
+      if (!reply.ok || people.error) throw new Error(people.error || '村民读取失败');
+      residents = people; residentKey = key; residentAt = Date.now(); residentError = '';
+      renderResidents();
+    } catch(error){
+      if (error.name === 'AbortError' || version !== residentRequest || view !== 'islands') return;
+      residents = {hits:[],total:0}; residentError = '村民名册暂时无法读取，稍后自动重试'; renderResidents();
+    } finally {
+      if (version === residentRequest) pendingResidentKey = '';
+    }
+  }
 
   function hash(text){ let value = 2166136261; for (const c of text) value = Math.imul(value ^ c.charCodeAt(0), 16777619); return value >>> 0; }
   function residentKind(path){

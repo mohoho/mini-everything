@@ -9,6 +9,7 @@
 """
 import argparse
 import array
+import bisect
 import heapq
 import json
 import ntpath
@@ -90,6 +91,7 @@ class Volume:
         self.lock = threading.RLock()
         self.paths = []
         self.lower = []
+        self._directory_index = None
         self.frns = array.array("Q")
         self.isdirs = bytearray()
         self.dirs = {}                  # frn -> resolved directory path
@@ -179,6 +181,7 @@ class Volume:
         with self.lock:
             self.paths = [r[0] for r in rows]
             self.lower = [r[0].lower() for r in rows]
+            self._directory_index = (self.lower, None)
             self.frns = array.array("Q", (r[1] for r in rows))
             self.isdirs = bytearray(1 if r[2] else 0 for r in rows)
             self.dirs = dirs
@@ -273,12 +276,41 @@ class Volume:
 
     def snapshot(self):
         with self.lock:
+            # Production indexes are already sorted. Reuse their strings without
+            # allocating a second per-file table; tolerate unsorted imported data.
+            if self._directory_index is None or self._directory_index[0] is not self.lower:
+                if all(self.lower[i-1] <= self.lower[i] for i in range(1, len(self.lower))):
+                    self._directory_index = (self.lower, None)
+                else:
+                    order = array.array('Q', sorted(range(len(self.lower)), key=self.lower.__getitem__))
+                    self._directory_index = (self.lower, ([self.lower[i] for i in order], order))
             return (self.paths, self.lower, self.frns, self.isdirs,
                     list(self.added.items()), set(self.added),
-                    self.removed.copy(), tuple(self.removed_prefixes))
+                    self.removed.copy(), tuple(self.removed_prefixes), self._directory_index)
 
-    def matches(self, needle, regex, case, snapshot=None):
-        paths, lower, frns, isdirs, added, added_keys, removed, prefixes = snapshot or self.snapshot()
+    def matches(self, needle, regex, case, snapshot=None, scope=""):
+        paths, lower, frns, isdirs, added, added_keys, removed, prefixes, directory_index = snapshot or self.snapshot()
+        if scope:
+            prefix = scope.lower().rstrip('\\') + '\\'
+            imported = directory_index[1]
+            keys, order = imported if imported else (lower, None)
+            start = bisect.bisect_left(keys, prefix)
+            # The final backslash's successor is ']': this bounds every suffix,
+            # including Unicode filenames, without including similarly named folders.
+            end = bisect.bisect_left(keys, prefix[:-1] + ']')
+            indices = range(start, end) if order is None else (order[i] for i in range(start, end))
+            rx = re.compile(needle, 0 if case else re.IGNORECASE) if regex else None
+            for i in indices:
+                p = paths[i]
+                if lower[i] in added_keys or self._hidden(p, removed, prefixes):
+                    continue
+                if (rx.search(p) if regex else needle in (p if case else lower[i])):
+                    yield p, frns[i], bool(isdirs[i])
+            for key, (p, frn, isd) in added:
+                if key.startswith(prefix) and not self._hidden(p, removed, prefixes):
+                    if (rx.search(p) if regex else needle in (p if case else key)):
+                        yield p, frn, isd
+            return
         if regex:
             rx = re.compile(needle, 0 if case else re.IGNORECASE)
             for i, p in enumerate(paths):
@@ -407,7 +439,7 @@ class Service:
         def candidates():
             nonlocal total
             for vol in self.selected(which):
-                for path, frn, is_dir in vol.matches(needle, regex, case):
+                for path, frn, is_dir in vol.matches(needle, regex, case, scope=scope):
                     if dirs_only and not is_dir:
                         continue
                     if not in_scope(path, scope):
@@ -477,7 +509,7 @@ class Service:
         files = directories = 0
         needle = q if case or regex else q.lower()
         for vol in volumes:
-            for path, _frn, is_dir in vol.matches(needle, regex, case):
+            for path, _frn, is_dir in vol.matches(needle, regex, case, scope=scope):
                 if not in_scope(path, scope) or (dirs_only and not is_dir):
                     continue
                 # Skip the root itself in recursive fallback indexes.
@@ -597,7 +629,7 @@ class SizeOverviewJob:
 
         def entries():
             for vol, snapshot in snapshots:
-                for path, frn, is_dir in vol.matches(self.needle, self.regex, self.case, snapshot):
+                for path, frn, is_dir in vol.matches(self.needle, self.regex, self.case, snapshot, scope=self.scope):
                     if self.cancel.is_set():
                         return
                     if not in_scope(path, self.scope):
