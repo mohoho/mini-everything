@@ -340,7 +340,7 @@
       path(p.poly);ctx.strokeStyle='rgba(51,67,46,.65)';ctx.lineWidth=.8;ctx.stroke();
     });
     ctx.strokeStyle='#d6bc84';ctx.lineWidth=.8;ctx.setLineDash([2,1]);
-    world.roads.forEach(([a,b])=>{ctx.beginPath();ctx.moveTo(a[0]*sx,a[1]*sy);ctx.lineTo(b[0]*sx,b[1]*sy);ctx.stroke();});
+    (world.roadPaths || world.roads).forEach(points=>{ctx.beginPath();points.forEach(([x,y],i)=>i?ctx.lineTo(x*sx,y*sy):ctx.moveTo(x*sx,y*sy));ctx.stroke();});
     ctx.setLineDash([]);
     world.regions.forEach(p=>{
       if(p.node.kind!=='directory') return;
